@@ -31,6 +31,7 @@ async def main_loop(args: argparse.Namespace):
     """
     # 1. Initialize core components
     dashboard = Dashboard()
+    dashboard.set_mode(args.mode)
     data_logger = DataLogger(db_path="./data/trades.db")
     risk_manager = RiskManager(
         max_position_usd=args.max_pos,
@@ -71,6 +72,7 @@ async def main_loop(args: argparse.Namespace):
             price_tick = await price_update_queue.get()
             signal = arb_detector.calculate_spread(price_tick)
             if signal:
+                dashboard.record_opportunity(signal)
                 await execution_signal_queue.put(signal)
             price_update_queue.task_done()
 
@@ -78,7 +80,15 @@ async def main_loop(args: argparse.Namespace):
         """Task to consume execution signals and place orders."""
         while True:
             signal = await execution_signal_queue.get()
-            await execution_engine.execute_arbitrage(signal)
+            success = await execution_engine.execute_arbitrage(signal)
+            if success:
+                trade_record = {
+                    "market_id": signal.get("market_id"),
+                    "spread": signal.get("spread", 0.0),
+                    "estimated_profit": signal.get("estimated_profit_per_share", 0.0),
+                    "status": "WIN",  # simplified for paper mode
+                }
+                dashboard.record_execution(trade_record)
             execution_signal_queue.task_done()
 
     # 4. Start all tasks concurrently
