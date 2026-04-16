@@ -36,7 +36,7 @@ async def main_loop(args: argparse.Namespace):
     risk_manager = RiskManager(
         max_position_usd=args.max_pos,
         daily_loss_limit=30.0, # Could be from settings/args
-        max_open_positions=3
+        max_open_positions=100 # Diperlonggar untuk Paper Mode agar bisa spam eksekusi
     )
     execution_engine = ExecutionEngine(
         mode=args.mode,
@@ -114,29 +114,31 @@ def main():
     """
     Entry point parser for Prototype-9.
     """
+    import config.settings as settings
+
     parser = argparse.ArgumentParser(description="Prototype-9: Polymarket High-Frequency Arbitrage System")
     parser.add_argument(
         "--mode", 
         choices=["paper", "live"], 
-        default="paper", 
-        help="Trading mode (default: paper)"
+        default=settings.TRADING_MODE, 
+        help=f"Trading mode (default from .env: {settings.TRADING_MODE})"
     )
     parser.add_argument(
         "--min-spread", 
         type=float, 
-        default=0.020, 
-        help="Minimum spread threshold to trigger trades (default: 0.020)"
+        default=settings.MIN_SPREAD, 
+        help=f"Minimum spread threshold to trigger trades (default from .env: {settings.MIN_SPREAD})"
     )
     parser.add_argument(
         "--max-pos", 
         type=float, 
-        default=50.0, 
-        help="Max position size per trade in USD (default: 50.0)"
+        default=settings.MAX_POSITION_USD, 
+        help=f"Max position size per trade in USD (default from .env: {settings.MAX_POSITION_USD})"
     )
     parser.add_argument(
         "--log-level", 
         choices=["DEBUG", "INFO", "WARNING", "ERROR"], 
-        default="INFO", 
+        default="WARNING", # Default diubah ke WARNING agar TUI rich Dashboard tidak tertabrak teks log
         help="Logging verbosity level"
     )
     parser.add_argument(

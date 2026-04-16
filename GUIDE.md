@@ -161,6 +161,27 @@ Paper mode adalah **mode wajib sebelum live**. Semua logika deteksi, sizing, dan
 
 ### Run dasar
 
+Masuk ke venv terlebih dahulu
+```bash
+venv\Scripts\python main.py --mode paper
+```
+
+### Melihat History Eksekusi Trade (Database)
+Semua order log yang sukses akan tercatat di `/data/trades.db`. 
+Gunakan script pembaca berikut untuk menampilkannya ke terminal:
+```bash
+venv\Scripts\python utils/view_trades.py
+```
+
+# Catch the current active window
+python utils/market_discovery.py --timeframe 5m
+
+# Auto-refresh every 30s — catches new windows as they open
+python utils/market_discovery.py --timeframe 5m --watch
+
+# See all short-window markets across timeframes
+python utils/market_discovery.py --timeframe all --limit 50
+
 ```bash
 python main.py --mode paper
 ```
