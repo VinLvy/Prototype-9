@@ -1,68 +1,395 @@
+"""
+core/price_monitor.py
+----------------------
+Connects to Polymarket's CLOB WebSocket to stream real-time price ticks.
+
+Correct WSS endpoint (per docs):
+    wss://ws-subscriptions-clob.polymarket.com/ws/market
+
+Protocol:
+    1. Connect to WSS endpoint
+    2. Send subscription message: {"assets_ids": [...token_ids], "type": "market"}
+    3. Receive event_type frames: "book", "price_change", "best_bid_ask", "last_trade_price"
+    4. Send heartbeat ping {} every 10 seconds
+
+CRITICAL: Polymarket does NOT use human-readable market slugs over WebSocket.
+Markets are identified by numeric token IDs (asset_id). Two token IDs exist per binary
+market: one for YES, one for NO. These are sourced from the Gamma REST API field
+`clobTokenIds` (JSON-encoded array string).
+"""
+
 import asyncio
+import json
 import logging
-from typing import AsyncGenerator, Dict, Any, List
+import time
+from typing import AsyncGenerator, Dict, Any, List, Optional
+
+import aiohttp
+import websockets
+from websockets.exceptions import ConnectionClosed, WebSocketException
+
+# ---------------------------------------------------------------------------
+# Constants — per official Polymarket documentation
+# ---------------------------------------------------------------------------
+GAMMA_API_BASE   = "https://gamma-api.polymarket.com"
+WSS_ENDPOINT     = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
+PING_INTERVAL_S  = 10   # docs: send heartbeat {} every 10s
+RECONNECT_DELAY_S = 5   # backoff before reconnect attempt
+
+
+logger = logging.getLogger(__name__)
+
 
 class PriceMonitor:
     """
-    PriceMonitor connects to the Polymarket WebSocket API
-    to stream real-time price updates for targeted binary markets.
+    Discovers active Polymarket binary markets, resolves their YES/NO token IDs,
+    then streams real-time price ticks via the CLOB WebSocket.
+
+    Emitted tick format (normalized for ArbitrageDetector):
+    {
+        'market_id':   str,   # human-readable question or slug
+        'condition_id': str,  # on-chain condition ID (0x...)
+        'yes_token_id': str,  # numeric string token ID for YES side
+        'no_token_id':  str,  # numeric string token ID for NO side
+        'yes_price':   float, # best ask for YES token (cost to buy YES)
+        'no_price':    float, # best ask for NO token  (cost to buy NO)
+        'timestamp':   int    # unix ms from WSS message
+    }
     """
 
-    def __init__(self, markets: List[str]):
+    def __init__(
+        self,
+        markets: List[str],
+        max_markets: int = 20,
+        keyword_filter: Optional[str] = None,
+    ):
         """
-        Initialize the monitor with a list of target markets.
-        
         Args:
-            markets (List[str]): List of market identifiers (e.g. ['BTC-UP-DOWN-15M']).
-                                 If empty, default targeting logic should be applied.
+            markets: List of market slugs or question substrings to target.
+                     Empty list = auto-discover top active markets.
+            max_markets: Cap on how many markets to subscribe to simultaneously.
+            keyword_filter: Optional keyword to filter market questions
+                            (e.g. 'BTC', 'bitcoin').
         """
-        self.markets = markets
-        self.logger = logging.getLogger(self.__class__.__name__)
-        self._is_connected = False
-        
-        # Placeholder for websocket connection
-        self._ws = None 
+        self.target_slugs   = markets
+        self.max_markets    = max_markets
+        self.keyword_filter = keyword_filter
+        self._is_connected  = False
+        self._ws            = None
 
-    async def _connect_ws(self):
+        # Populated during market discovery:
+        # { asset_id: {"market_id": str, "condition_id": str,
+        #               "yes_token_id": str, "no_token_id": str} }
+        self._token_map: Dict[str, Dict[str, Any]] = {}
+
+        # Live price state per asset_id: {"best_bid": float, "best_ask": float}
+        self._price_state: Dict[str, Dict[str, float]] = {}
+
+    # ------------------------------------------------------------------
+    # Market Discovery — Gamma REST API
+    # ------------------------------------------------------------------
+
+    async def _discover_markets(self) -> List[Dict[str, Any]]:
         """
-        Establishes connection to the WebSocket and handles reconnect logic.
-        (Implementation depends on Polymarket API specs)
+        Fetch active, open markets from the Gamma REST API.
+        Returns list of dicts with keys: slug, question, conditionId, clobTokenIds.
+
+        Endpoint: GET https://gamma-api.polymarket.com/markets
+        Query:    active=true, closed=false, limit=<max_markets>
         """
-        self.logger.info("Initializing WebSocket connection...")
-        # TODO: Implement actual websocket using 'websockets' or 'aiohttp' here
-        await asyncio.sleep(1) # Simulating connection delay
-        self._is_connected = True
-        self.logger.info("WebSocket connected successfully.")
+        params = {
+            "active": "true",
+            "closed": "false",
+            "limit": self.max_markets * 3,  # over-fetch to allow filtering
+        }
+        url = f"{GAMMA_API_BASE}/markets"
+
+        logger.info(f"Discovering active markets from {url} ...")
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                if resp.status != 200:
+                    raise RuntimeError(
+                        f"Gamma API error {resp.status}: {await resp.text()}"
+                    )
+                markets_raw: List[Dict] = await resp.json()
+
+        # Filter: must have CLOB token IDs (binary markets only)
+        markets = [
+            m for m in markets_raw
+            if m.get("clobTokenIds") and m.get("enableOrderBook")
+        ]
+
+        # Optional keyword filter
+        if self.keyword_filter:
+            kw = self.keyword_filter.lower()
+            markets = [
+                m for m in markets
+                if kw in (m.get("question") or "").lower()
+                or kw in (m.get("slug") or "").lower()
+            ]
+
+        # Optional slug filter
+        if self.target_slugs:
+            slugs_lower = {s.lower() for s in self.target_slugs}
+            markets = [
+                m for m in markets
+                if (m.get("slug") or "").lower() in slugs_lower
+            ]
+
+        markets = markets[: self.max_markets]
+        logger.info(f"Resolved {len(markets)} target markets.")
+        return markets
+
+    def _build_token_map(self, markets: List[Dict]) -> List[str]:
+        """
+        Builds self._token_map and returns flat list of all token IDs to subscribe.
+
+        clobTokenIds is a JSON-encoded string in the API response:
+            "[\"<yes_token_id>\", \"<no_token_id>\"]"
+        Index 0 = YES token, index 1 = NO token (per Polymarket convention).
+        """
+        all_token_ids = []
+
+        for m in markets:
+            try:
+                token_ids: List[str] = json.loads(m["clobTokenIds"])
+            except (json.JSONDecodeError, KeyError):
+                logger.warning(f"Skipping market {m.get('slug')}: bad clobTokenIds")
+                continue
+
+            if len(token_ids) < 2:
+                logger.warning(f"Skipping market {m.get('slug')}: expected 2 token IDs")
+                continue
+
+            yes_id, no_id = token_ids[0], token_ids[1]
+            market_label  = m.get("question") or m.get("slug") or m.get("conditionId", "UNKNOWN")
+            condition_id  = m.get("conditionId", "")
+
+            meta = {
+                "market_id":    market_label,
+                "condition_id": condition_id,
+                "yes_token_id": yes_id,
+                "no_token_id":  no_id,
+            }
+
+            # Map both token IDs back to the same market metadata
+            self._token_map[yes_id] = meta
+            self._token_map[no_id]  = meta
+
+            # Init price state
+            self._price_state[yes_id] = {"best_bid": 0.0, "best_ask": 0.0}
+            self._price_state[no_id]  = {"best_bid": 0.0, "best_ask": 0.0}
+
+            all_token_ids.extend([yes_id, no_id])
+
+        logger.info(f"Token map built: {len(self._token_map) // 2} markets, {len(all_token_ids)} token IDs")
+        return all_token_ids
+
+    # ------------------------------------------------------------------
+    # WebSocket — Price Streaming
+    # ------------------------------------------------------------------
+
+    async def _send_subscription(self, ws, token_ids: List[str]):
+        """
+        Send initial subscription request per WSS protocol spec.
+        Message format: {"assets_ids": [...], "type": "market"}
+        """
+        payload = {"assets_ids": token_ids, "type": "market"}
+        await ws.send(json.dumps(payload))
+        logger.info(f"Subscribed to {len(token_ids)} token IDs.")
+
+    async def _heartbeat_loop(self, ws):
+        """Send {} ping every PING_INTERVAL_S seconds."""
+        try:
+            while True:
+                await asyncio.sleep(PING_INTERVAL_S)
+                await ws.send("{}")
+                logger.debug("Heartbeat sent.")
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.warning(f"Heartbeat error: {e}")
+
+    def _process_message(self, raw: str) -> Optional[Dict[str, Any]]:
+        """
+        Parse a WSS message and return a normalized tick if a complete YES+NO
+        price pair is available for a market, otherwise None.
+
+        Handles event types: book, price_change, best_bid_ask, last_trade_price
+        """
+        try:
+            msg = json.loads(raw)
+            if isinstance(msg, list):
+                if not msg:
+                    return None
+                for payload in msg:
+                    # Polymarket occasionally batches events in an array
+                    tick = self._process_single_payload(payload)
+                    if tick is not None:
+                        # For simplicity, returning the first complete tick if batched
+                        return tick
+                return None
+            return self._process_single_payload(msg)
+        except json.JSONDecodeError:
+            return None  # ping/pong are "{}" — ignore
+
+    def _process_single_payload(self, msg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+
+        event_type = msg.get("event_type")
+        ts         = int(msg.get("timestamp", time.time() * 1000))
+
+        # --- Orderbook snapshot: extract best bid/ask from top of book ---
+        if event_type == "book":
+            asset_id = msg.get("asset_id")
+            if asset_id not in self._price_state:
+                return None
+            bids = msg.get("bids", [])
+            asks = msg.get("asks", [])
+            best_bid = float(bids[0]["price"]) if bids else 0.0
+            best_ask = float(asks[0]["price"]) if asks else 0.0
+            self._price_state[asset_id] = {"best_bid": best_bid, "best_ask": best_ask}
+
+        # --- Best bid/ask delta update (most frequent, lowest latency) ---
+        elif event_type == "best_bid_ask":
+            asset_id = msg.get("asset_id")
+            if asset_id not in self._price_state:
+                return None
+            self._price_state[asset_id] = {
+                "best_bid": float(msg.get("best_bid", 0)),
+                "best_ask": float(msg.get("best_ask", 0)),
+            }
+
+        # --- Price change: iterate price_changes array ---
+        elif event_type == "price_change":
+            for change in msg.get("price_changes", []):
+                asset_id = change.get("asset_id")
+                if asset_id in self._price_state:
+                    self._price_state[asset_id] = {
+                        "best_bid": float(change.get("best_bid", 0)),
+                        "best_ask": float(change.get("best_ask", 0)),
+                    }
+
+        # --- Last trade price: update best_ask as proxy ---
+        elif event_type == "last_trade_price":
+            asset_id = msg.get("asset_id")
+            if asset_id in self._price_state:
+                price = float(msg.get("price", 0))
+                self._price_state[asset_id]["best_ask"] = price
+
+        # --- Market resolved / closed reset ---
+        elif event_type in ("market_resolved", "market_closed", "closed", "resolved"):
+            condition_id = msg.get("condition_id")
+            asset_id = msg.get("asset_id")
+            
+            if condition_id:
+                # Clear all assets associated with this condition
+                for asset, meta in self._token_map.items():
+                    if meta.get("condition_id") == condition_id and asset in self._price_state:
+                        self._price_state[asset] = {"best_bid": 0.0, "best_ask": 0.0}
+            
+            if asset_id and asset_id in self._price_state:
+                self._price_state[asset_id] = {"best_bid": 0.0, "best_ask": 0.0}
+
+        else:
+            return None  # new_market, tick_size_change — not relevant here
+
+        # After any price update, try to emit a complete tick for that market
+        return self._try_emit_tick(
+            self._token_map.get(msg.get("asset_id", "")),
+            ts
+        )
+
+    def _try_emit_tick(self, meta: Optional[Dict], ts: int) -> Optional[Dict[str, Any]]:
+        """
+        If both YES and NO prices are non-zero for a market, return a normalized tick dict.
+        """
+        if meta is None:
+            return None
+
+        yes_id = meta["yes_token_id"]
+        no_id  = meta["no_token_id"]
+
+        yes_state = self._price_state.get(yes_id, {})
+        no_state  = self._price_state.get(no_id,  {})
+
+        # Use best_ask as the cost to BUY that side (what matters for arb)
+        yes_price = yes_state.get("best_ask", 0.0)
+        no_price  = no_state.get("best_ask", 0.0)
+
+        if yes_price <= 0.0 or no_price <= 0.0:
+            return None  # Incomplete — wait for both sides
+
+        return {
+            "market_id":    meta["market_id"],
+            "condition_id": meta["condition_id"],
+            "yes_token_id": yes_id,
+            "no_token_id":  no_id,
+            "yes_price":    yes_price,
+            "no_price":     no_price,
+            "timestamp":    ts,
+        }
+
+    # ------------------------------------------------------------------
+    # Public Interface — Async Generator
+    # ------------------------------------------------------------------
 
     async def stream_prices(self) -> AsyncGenerator[Dict[str, Any], None]:
         """
-        An async generator that yields price ticks as they arrive.
-        
-        Yields:
-            Dict[str, Any]: A dictionary representing the market tick. 
-                            Example:
-                            {
-                                'market_id': 'BTC-UP-DOWN-15M',
-                                'yes_price': 0.55,
-                                'no_price': 0.48,
-                                'timestamp': 1713184510
-                            }
-        """
-        if not self._is_connected:
-            await self._connect_ws()
+        Async generator. Yields normalized price ticks as they arrive.
 
-        # Simulate incoming price data for now (Alpha v0.1 Sandbox)
-        self.logger.info(f"Listening for price events on markets: {self.markets or 'ALL'}")
-        
+        Flow:
+            1. Discover markets via Gamma REST API
+            2. Build token ID map
+            3. Connect to WSS endpoint
+            4. Subscribe to all token IDs
+            5. Parse messages and yield complete YES+NO tick pairs
+            6. Auto-reconnect on disconnect with exponential backoff
+        """
+        # Step 1 & 2: Market discovery
+        markets   = await self._discover_markets()
+        token_ids = self._build_token_map(markets)
+
+        if not token_ids:
+            logger.error("No token IDs resolved. Cannot stream. Check market filters.")
+            return
+
+        reconnect_attempts = 0
+
         while True:
-            # Simulate a WebSocket parsing loop
-            await asyncio.sleep(2) # Mock interval
-            
-            mock_tick = {
-                'market_id': self.markets[0] if self.markets else 'BTC-UP-DOWN-15M',
-                'yes_price': 0.52,
-                'no_price': 0.51,  # Creates a 0.03 spread (0.52 + 0.51 = 1.03)
-                'timestamp': asyncio.get_event_loop().time()
-            }
-            
-            yield mock_tick
+            try:
+                logger.info(f"Connecting to {WSS_ENDPOINT} ...")
+                async with websockets.connect(
+                    WSS_ENDPOINT,
+                    ping_interval=None,  # We handle our own heartbeat
+                    ping_timeout=None,
+                ) as ws:
+                    self._ws          = ws
+                    self._is_connected = True
+                    reconnect_attempts = 0
+
+                    await self._send_subscription(ws, token_ids)
+
+                    # Start heartbeat as background task
+                    heartbeat_task = asyncio.create_task(self._heartbeat_loop(ws))
+
+                    try:
+                        async for raw_msg in ws:
+                            tick = self._process_message(raw_msg)
+                            if tick is not None:
+                                yield tick
+                    finally:
+                        heartbeat_task.cancel()
+                        self._is_connected = False
+
+            except (ConnectionClosed, WebSocketException) as e:
+                logger.warning(f"WebSocket disconnected: {e}. Reconnecting in {RECONNECT_DELAY_S}s...")
+            except aiohttp.ClientError as e:
+                logger.error(f"HTTP error during market discovery: {e}")
+            except Exception as e:
+                logger.error(f"Unexpected error in stream_prices: {e}", exc_info=True)
+
+            self._is_connected = False
+            reconnect_attempts += 1
+            delay = min(RECONNECT_DELAY_S * reconnect_attempts, 60)
+            logger.info(f"Reconnect attempt #{reconnect_attempts} in {delay}s...")
+            await asyncio.sleep(delay)

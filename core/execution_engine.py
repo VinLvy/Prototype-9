@@ -33,6 +33,8 @@ class ExecutionEngine:
             bool: True if execution was completed successfully, False otherwise.
         """
         market_id = signal.get("market_id")
+        yes_token_id = signal.get("yes_token_id")
+        no_token_id = signal.get("no_token_id")
         
         # 1. Ask RiskManager if we are allowed to take this trade
         risk_evaluation = self.risk_manager.evaluate_trade(signal)
@@ -42,22 +44,29 @@ class ExecutionEngine:
 
         position_size = risk_evaluation.get("recommended_size_usd", 10.0)
 
-        self.logger.info(f"Executing trade for {market_id} | Mode: {self.mode.upper()} | Size: ${position_size:.2f}")
+        self.logger.info(
+            f"Executing pair on limit orderbook | Mode: {self.mode.upper()} "
+            f"| Size: ${position_size:.2f} | YES: {str(yes_token_id)[:10]}... NO: {str(no_token_id)[:10]}..."
+        )
 
         # 2. Simulate API delays (mock network latency)
         await asyncio.sleep(0.1) # 100ms realistic mock delay
         
         if self.mode == "live":
-            # TODO: Implement actual CLOB API POST actions via 'polymarket-py'
+            # TODO: Implement actual CLOB API POST actions via 'py-clob-client'
             # try:
-            #     order_yes = api.create_order(side='buy', token_id=YES_TOKEN, price=..., size=...)
-            #     order_no  = api.create_order(side='buy', token_id=NO_TOKEN,  price=..., size=...)
+            #     # Place FOK (Fill-Or-Kill) or Limit orders simultaneously:
+            #     order_yes = api.create_and_post_order(token_id=yes_token_id, side="BUY", price=signal['yes_price'], size=position_size)
+            #     order_no  = api.create_and_post_order(token_id=no_token_id, side="BUY", price=signal['no_price'], size=position_size)
             # except Exception as e:
             #     ...
             pass
         elif self.mode == "paper":
-            # In paper mode we assume absolute fills.
-            pass
+            # Simulate fill probability in paper mode (e.g., 75% chance) to avoid automatic wins
+            import random
+            if random.random() > 0.75:
+                self.logger.warning(f"Paper mode: Execution FAILED (simulated liquidity miss) on {market_id}")
+                return False
         else:
             self.logger.error(f"Unknown mode '{self.mode}'")
             return False
