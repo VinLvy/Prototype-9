@@ -44,7 +44,8 @@ async def main_loop(args: argparse.Namespace):
         data_logger=data_logger
     )
     arb_detector = ArbitrageDetector(
-        min_spread_threshold=args.min_spread
+        min_spread_threshold=args.min_spread,
+        risk_manager=risk_manager
     )
     price_monitor = PriceMonitor(
         markets=[args.market] if args.market else [] # Empty means subscribe to all target markets
