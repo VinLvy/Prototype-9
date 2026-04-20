@@ -61,6 +61,13 @@ DAILY_LOSS_LIMIT: float = _get_float("DAILY_LOSS_LIMIT", 30.0)
 MAX_OPEN_POSITIONS: int = _get_int("MAX_OPEN_POSITIONS", 3)
 
 # ---------------------------------------------------------------------------
+# BoneReaper Strategy Parameters
+# ---------------------------------------------------------------------------
+STRATEGY: str = _get("STRATEGY", "arb").lower()  # 'arb' | 'bonereaper'
+ENTRY_PRICE_THRESHOLD: float = _get_float("ENTRY_PRICE_THRESHOLD", 0.35)
+HEDGE_TRIGGER_SECONDS: float = _get_float("HEDGE_TRIGGER_SECONDS", 120.0)
+MAX_COMBINED_COST: float = _get_float("MAX_COMBINED_COST", 0.97)
+# ---------------------------------------------------------------------------
 # Mode
 # ---------------------------------------------------------------------------
 TRADING_MODE: str = _get("TRADING_MODE", "paper").lower()  # 'paper' | 'live'
@@ -106,6 +113,7 @@ def summary() -> dict:
         "max_position_usd": MAX_POSITION_USD,
         "daily_loss_limit": DAILY_LOSS_LIMIT,
         "max_open_positions": MAX_OPEN_POSITIONS,
+        "strategy": STRATEGY,
         "max_gas_gwei": MAX_GAS_GWEI,
         "log_level": LOG_LEVEL,
         "db_path": DB_PATH,
