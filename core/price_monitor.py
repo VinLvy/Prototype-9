@@ -97,11 +97,19 @@ class PriceMonitor:
         Endpoint: GET https://gamma-api.polymarket.com/markets
         Query:    active=true, closed=false, limit=<max_markets>
         """
+        import config.settings as settings
+        
         params = {
             "active": "true",
             "closed": "false",
-            "limit": self.max_markets * 3,  # over-fetch to allow filtering
         }
+        
+        if settings.STRATEGY == "bonereaper":
+            params["limit"] = 500
+            params["order"] = "createdAt"
+            params["ascending"] = "false"
+        else:
+            params["limit"] = self.max_markets * 3  # over-fetch to allow filtering
         url = f"{GAMMA_API_BASE}/markets"
 
         logger.info(f"Discovering active markets from {url} ...")
@@ -118,6 +126,26 @@ class PriceMonitor:
             m for m in markets_raw
             if m.get("clobTokenIds") and m.get("enableOrderBook")
         ]
+
+        if settings.STRATEGY == "bonereaper":
+            import re
+            from datetime import datetime
+            
+            FIVE_MIN_SLUG_PATTERNS = [
+                r"btc-updown-5m",
+                r"eth-updown-5m", 
+                r"sol-updown-5m",
+                r"\d{1,2}:\d{2}(am|pm)?-\d{1,2}:\d{2}(am|pm)?",  # time range pattern
+            ]
+            regex_combined = re.compile("|".join(FIVE_MIN_SLUG_PATTERNS), re.IGNORECASE)
+            
+            filtered_markets = []
+            for m in markets:
+                target_str = (m.get("slug", "") + " " + m.get("question", "")).lower()
+                # Gate 1: Regex is sufficient as Polymarket's `startDate` is now 24h in advance, breaking duration checks.
+                if regex_combined.search(target_str):
+                    filtered_markets.append(m)
+            markets = filtered_markets
 
         # Optional keyword filter
         if self.keyword_filter:
@@ -170,6 +198,7 @@ class PriceMonitor:
                 "condition_id": condition_id,
                 "yes_token_id": yes_id,
                 "no_token_id":  no_id,
+                "end_date_iso": m.get("endDate"),
             }
 
             # Map both token IDs back to the same market metadata
@@ -327,6 +356,7 @@ class PriceMonitor:
             "yes_price":    yes_price,
             "no_price":     no_price,
             "timestamp":    ts,
+            "end_date_iso": meta.get("end_date_iso"),
         }
 
     # ------------------------------------------------------------------
@@ -345,18 +375,19 @@ class PriceMonitor:
             5. Parse messages and yield complete YES+NO tick pairs
             6. Auto-reconnect on disconnect with exponential backoff
         """
-        # Step 1 & 2: Market discovery
-        markets   = await self._discover_markets()
-        token_ids = self._build_token_map(markets)
-
-        if not token_ids:
-            logger.error("No token IDs resolved. Cannot stream. Check market filters.")
-            return
-
         reconnect_attempts = 0
 
         while True:
             try:
+                # Step 1 & 2: Market discovery (moved inside loop to retry)
+                markets   = await self._discover_markets()
+                token_ids = self._build_token_map(markets)
+
+                if not token_ids:
+                    logger.warning("No token IDs resolved (no matching markets open). Retrying in 15s...")
+                    await asyncio.sleep(15)
+                    continue
+
                 logger.info(f"Connecting to {WSS_ENDPOINT} ...")
                 async with websockets.connect(
                     WSS_ENDPOINT,
