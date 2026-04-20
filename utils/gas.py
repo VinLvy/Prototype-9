@@ -73,17 +73,30 @@ class GasEstimator:
     async def refresh(self):
         """
         Fetch live gas price and MATIC/USD from external APIs.
-        In Alpha v0.1 this is mocked; replace with real HTTP calls in v0.2.
+        Catches exceptions and gracefully falls back to previous values.
         """
-        # TODO: Replace with aiohttp calls to:
-        #   - https://gasstation.polygon.technology/v2  → gas price
-        #   - https://api.binance.com/api/v3/ticker/price?symbol=MATICUSDT → MATIC price
-        await asyncio.sleep(0)  # non-blocking no-op for now
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                # 1. Fetch Polygon Gas
+                async with session.get("https://gasstation.polygon.technology/v2", timeout=5) as gas_resp:
+                    if gas_resp.status == 200:
+                        gas_data = await gas_resp.json()
+                        # Use 'fast' maxFee, fallback to 'safeLow' if needed
+                        fast_gas = gas_data.get("fast", {}).get("maxFee", 0)
+                        if fast_gas > 0:
+                            self._current_gas_gwei = round(float(fast_gas), 1)
 
-        # Mock: simulate slight gas fluctuation
-        import random
-        self._current_gas_gwei = round(random.uniform(25.0, 60.0), 1)
-        self.matic_usd_price = round(random.uniform(0.80, 0.95), 4)
+                # 2. Fetch MATIC USD price
+                async with session.get("https://api.binance.com/api/v3/ticker/price?symbol=MATICUSDT", timeout=5) as price_resp:
+                    if price_resp.status == 200:
+                        price_data = await price_resp.json()
+                        matic_price = float(price_data.get("price", 0.0))
+                        if matic_price > 0:
+                            self.matic_usd_price = round(matic_price, 4)
+                            
+        except Exception as e:
+            self.logger.warning(f"Failed to fetch live gas/price data: {e}. Using cached values.")
 
         self.logger.debug(
             f"Gas refreshed: {self._current_gas_gwei} Gwei | "
