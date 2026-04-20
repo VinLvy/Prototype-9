@@ -15,6 +15,7 @@ try:
     from core import (
         PriceMonitor,
         ArbitrageDetector,
+        BoneReaperDetector,
         ExecutionEngine,
         RiskManager,
         DataLogger,
@@ -24,6 +25,20 @@ except ImportError as e:
     logging.critical(f"Failed to import core modules: {e}")
     sys.exit(1)
 
+
+async def generate_interim_stats_report(count: int, dlogger):
+    """Write an interim stats summary to a file to avoid messing up the TUI."""
+    import os
+    os.makedirs("./data", exist_ok=True)
+    report_file = f"./data/interim_report_{count}.txt"
+    try:
+        with open(report_file, "w") as f:
+            f.write(f"--- INTERIM STATS REPORT ({count} Paper Trades) ---\n")
+            f.write("Generated asynchronously while bot continues running.\n")
+            f.write(f"Total Trades Logged in this session: {count}\n")
+        logging.getLogger().warning(f"Interim stats report generated at {report_file}")
+    except Exception as e:
+        logging.getLogger().error(f"Failed to write interim report: {e}")
 
 async def main_loop(args: argparse.Namespace):
     """
@@ -43,10 +58,14 @@ async def main_loop(args: argparse.Namespace):
         risk_manager=risk_manager,
         data_logger=data_logger
     )
-    arb_detector = ArbitrageDetector(
-        min_spread_threshold=args.min_spread,
-        risk_manager=risk_manager
-    )
+    if args.strategy == "bonereaper":
+        detector = BoneReaperDetector(risk_manager=risk_manager)
+    else:
+        detector = ArbitrageDetector(
+            min_spread_threshold=args.min_spread,
+            risk_manager=risk_manager
+        )
+        
     price_monitor = PriceMonitor(
         markets=[args.market] if args.market else [] # Empty means subscribe to all target markets
     )
@@ -71,7 +90,11 @@ async def main_loop(args: argparse.Namespace):
         """Task to consume price updates and detect arbitrage opportunities."""
         while True:
             price_tick = await price_update_queue.get()
-            signal = arb_detector.calculate_spread(price_tick)
+            if args.strategy == "bonereaper":
+                signal = detector.calculate_signal(price_tick)
+            else:
+                signal = detector.calculate_spread(price_tick)
+                
             if signal:
                 dashboard.record_opportunity(signal)
                 await execution_signal_queue.put(signal)
@@ -79,6 +102,7 @@ async def main_loop(args: argparse.Namespace):
 
     async def execute_trades():
         """Task to consume execution signals and place orders."""
+        paper_trade_count = 0
         while True:
             signal = await execution_signal_queue.get()
             success = await execution_engine.execute_arbitrage(signal)
@@ -87,9 +111,15 @@ async def main_loop(args: argparse.Namespace):
                     "market_id": signal.get("market_id"),
                     "spread": signal.get("spread", 0.0),
                     "estimated_profit": signal.get("estimated_profit_per_share", 0.0),
-                    "status": "WIN",  # simplified for paper mode
+                    "status": "WIN" if args.mode == "paper" else "FILLED",
                 }
                 dashboard.record_execution(trade_record)
+                
+                if args.mode == "paper":
+                    paper_trade_count += 1
+                    if paper_trade_count > 0 and paper_trade_count % 20 == 0:
+                        asyncio.create_task(generate_interim_stats_report(paper_trade_count, data_logger))
+                        
             execution_signal_queue.task_done()
 
     # 4. Start all tasks concurrently
@@ -129,6 +159,12 @@ def main():
         type=float, 
         default=settings.MIN_SPREAD, 
         help=f"Minimum spread threshold to trigger trades (default from .env: {settings.MIN_SPREAD})"
+    )
+    parser.add_argument(
+        "--strategy", 
+        choices=["arb", "bonereaper"], 
+        default=settings.STRATEGY, 
+        help=f"Trading strategy to use (default from .env: {settings.STRATEGY})"
     )
     parser.add_argument(
         "--max-pos", 
