@@ -64,9 +64,9 @@ MAX_OPEN_POSITIONS: int = _get_int("MAX_OPEN_POSITIONS", 3)
 # BoneReaper Strategy Parameters
 # ---------------------------------------------------------------------------
 STRATEGY: str = _get("STRATEGY", "arb").lower()  # 'arb' | 'bonereaper'
-ENTRY_PRICE_THRESHOLD: float = _get_float("ENTRY_PRICE_THRESHOLD", 0.35)
-HEDGE_TRIGGER_SECONDS: float = _get_float("HEDGE_TRIGGER_SECONDS", 120.0)
-MAX_COMBINED_COST: float = _get_float("MAX_COMBINED_COST", 0.97)
+ENTRY_PRICE_THRESHOLD: float = _get_float("ENTRY_PRICE_THRESHOLD", 0.42)
+HEDGE_TRIGGER_SECONDS: float = _get_float("HEDGE_TRIGGER_SECONDS", 45.0)
+MAX_COMBINED_COST: float = _get_float("MAX_COMBINED_COST", 0.96)
 # ---------------------------------------------------------------------------
 # Mode
 # ---------------------------------------------------------------------------
