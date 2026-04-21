@@ -93,35 +93,31 @@ class PriceMonitor:
         """
         Fetch active, open markets from the Gamma REST API.
         Returns list of dicts with keys: slug, question, conditionId, clobTokenIds.
-
-        Endpoint: GET https://gamma-api.polymarket.com/markets
-        Query:    active=true, closed=false, limit=<max_markets>
         """
         import config.settings as settings
-        
-        params = {
-            "active": "true",
-        }
-        
+
+        params = {"active": "true"}
+
         if settings.STRATEGY == "bonereaper":
-            params["limit"] = 500
-            params["order"] = "createdAt"
-            params["ascending"] = "false"
+            from datetime import datetime, timezone, timedelta
+            now = datetime.now(timezone.utc)
+            window_end   = (now + timedelta(minutes=8)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            window_start = (now - timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            params["limit"]        = 50
+            params["end_date_min"] = window_start
+            params["end_date_max"] = window_end
         else:
             params["closed"] = "false"
-            params["limit"] = self.max_markets * 3  # over-fetch to allow filtering
-        url = f"{GAMMA_API_BASE}/markets"
+            params["limit"]  = self.max_markets * 3
 
+        url = f"{GAMMA_API_BASE}/markets"
         logger.info(f"Discovering active markets from {url} ...")
         async with aiohttp.ClientSession() as session:
             async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=15)) as resp:
                 if resp.status != 200:
-                    raise RuntimeError(
-                        f"Gamma API error {resp.status}: {await resp.text()}"
-                    )
+                    raise RuntimeError(f"Gamma API error {resp.status}: {await resp.text()}")
                 markets_raw: List[Dict] = await resp.json()
 
-        # Filter: must have CLOB token IDs (binary markets only)
         markets = [
             m for m in markets_raw
             if m.get("clobTokenIds") and m.get("enableOrderBook")
@@ -130,54 +126,73 @@ class PriceMonitor:
         if settings.STRATEGY == "bonereaper":
             import re
             from datetime import datetime, timezone, timedelta
-            
+
             now = datetime.now(timezone.utc)
-            window_cutoff = now - timedelta(minutes=10)  # tolak market yang closed > 10 menit lalu
-            
-            def is_in_window(m):
-                end_raw = m.get("endDate") or m.get("endDateIso") or ""
+
+            FIVE_MIN = re.compile(
+                r"btc-updown-5m|eth-updown-5m|sol-updown-5m"
+                r"|xrp-updown-5m|bnb-updown-5m|doge-updown-5m|hype-updown-5m",
+                re.IGNORECASE
+            )
+
+            def get_remaining(m):
+                end_raw = m.get("endDate") or ""
                 if not end_raw:
-                    return True
+                    return -1
                 try:
                     end_dt = datetime.fromisoformat(end_raw.replace("Z", "+00:00"))
-                    return end_dt >= window_cutoff
+                    return (end_dt - now).total_seconds()
                 except Exception:
-                    return True
+                    return -1
 
-            FIVE_MIN_SLUG_PATTERNS = [
-                r"btc-updown-5m",
-                r"eth-updown-5m", 
-                r"sol-updown-5m",
-                r"\d{1,2}:\d{2}(am|pm)?-\d{1,2}:\d{2}(am|pm)?",  # time range pattern
+            # Dengan end_date_min/max filter di API, semua hasil sudah dalam window
+            # Tapi tetap filter slug untuk pastikan hanya 5m updown
+            filtered = [
+                m for m in markets
+                if FIVE_MIN.search((m.get("slug","") + " " + m.get("question","")).lower())
+                and get_remaining(m) > 30  # minimal 30 detik tersisa
             ]
-            regex_combined = re.compile("|".join(FIVE_MIN_SLUG_PATTERNS), re.IGNORECASE)
-            
-            filtered_markets = []
-            for m in markets:
-                target_str = (m.get("slug", "") + " " + m.get("question", "")).lower()
-                # Gate 1: Regex is sufficient as Polymarket's `startDate` is now 24h in advance, breaking duration checks.
-                if regex_combined.search(target_str) and is_in_window(m):
-                    filtered_markets.append(m)
-            markets = filtered_markets
+            filtered.sort(key=get_remaining)  # paling segera expire duluan
 
-        # Optional keyword filter
+            # Fallback ke 15m jika window 5m belum buka
+            if not filtered:
+                logger.warning("No 5m markets in window. Falling back to 15m.")
+                FIFTEEN_MIN_END = (now + timedelta(minutes=18)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                # Re-fetch dengan window lebih lebar
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        url,
+                        params={**params, "end_date_max": FIFTEEN_MIN_END},
+                        timeout=aiohttp.ClientTimeout(total=15)
+                    ) as resp:
+                        fallback_raw = await resp.json()
+                FIFTEEN = re.compile(
+                    r"btc-updown-15m|eth-updown-15m|sol-updown-15m"
+                    r"|xrp-updown-15m|bnb-updown-15m|doge-updown-15m|hype-updown-15m",
+                    re.IGNORECASE
+                )
+                filtered = [
+                    m for m in fallback_raw
+                    if m.get("clobTokenIds") and m.get("enableOrderBook")
+                    and FIFTEEN.search((m.get("slug","") + " " + m.get("question","")).lower())
+                    and get_remaining(m) > 30
+                ]
+                filtered.sort(key=get_remaining)
+
+            markets = filtered
+            logger.info(f"BoneReaper: {len(markets)} markets in active window.")
+
+        # keyword/slug filters & max_markets cap (tidak berubah)
         if self.keyword_filter:
             kw = self.keyword_filter.lower()
-            markets = [
-                m for m in markets
-                if kw in (m.get("question") or "").lower()
-                or kw in (m.get("slug") or "").lower()
-            ]
+            markets = [m for m in markets if kw in (m.get("question") or "").lower()
+                       or kw in (m.get("slug") or "").lower()]
 
-        # Optional slug filter
         if self.target_slugs:
             slugs_lower = {s.lower() for s in self.target_slugs}
-            markets = [
-                m for m in markets
-                if (m.get("slug") or "").lower() in slugs_lower
-            ]
+            markets = [m for m in markets if (m.get("slug") or "").lower() in slugs_lower]
 
-        markets = markets[: self.max_markets]
+        markets = markets[:self.max_markets]
         logger.info(f"Resolved {len(markets)} target markets.")
         return markets
 
