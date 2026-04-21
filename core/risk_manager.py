@@ -59,8 +59,12 @@ class RiskManager:
         if side == "NO" and current_pos["no_exposure"] > 0:
             return {"allowed": False, "reason": "Already hold NO exposure for this market"}
 
-        # Calculate Position Size (Placeholder for Kelly Criterion calculation)
-        recommended_size = min(self.max_position_usd, 25.0) 
+        # Calculate Position Size using Kelly Criterion if available in signal
+        kelly_size = signal.get("recommended_size_usd", 0.0)
+        if kelly_size > 0:
+            recommended_size = min(kelly_size, self.max_position_usd)
+        else:
+            recommended_size = min(self.max_position_usd, 25.0) 
 
         return {
             "allowed": True,
