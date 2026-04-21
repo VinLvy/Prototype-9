@@ -91,7 +91,7 @@ class BoneReaperDetector:
                 end_dt = datetime.fromisoformat(end_date_iso.replace("Z", "+00:00"))
                 now_utc = datetime.now(timezone.utc)
                 remaining = (end_dt - now_utc).total_seconds()
-                if remaining < (self.hedge_trigger_seconds + 90):
+                if remaining < 90:
                     return None  # Terlalu terlambat untuk entry
             except Exception:
                 pass
