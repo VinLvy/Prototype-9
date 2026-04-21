@@ -85,6 +85,17 @@ class BoneReaperDetector:
             self.market_states[market_id]["state"] = "HEDGED"
             return self._create_signal(tick, hedge_side, hedge_price, reason="CUT_LOSS")
 
+        # Check if too late to enter
+        if end_date_iso and state["state"] == "IDLE":
+            try:
+                end_dt = datetime.fromisoformat(end_date_iso.replace("Z", "+00:00"))
+                now_utc = datetime.now(timezone.utc)
+                remaining = (end_dt - now_utc).total_seconds()
+                if remaining < (self.hedge_trigger_seconds + 90):
+                    return None  # Terlalu terlambat untuk entry
+            except Exception:
+                pass
+
         # 2. Check Entry
         if state["state"] == "IDLE":
             target_side = "YES" if yes_price < no_price else "NO"

@@ -101,7 +101,6 @@ class PriceMonitor:
         
         params = {
             "active": "true",
-            "closed": "false",
         }
         
         if settings.STRATEGY == "bonereaper":
@@ -109,6 +108,7 @@ class PriceMonitor:
             params["order"] = "createdAt"
             params["ascending"] = "false"
         else:
+            params["closed"] = "false"
             params["limit"] = self.max_markets * 3  # over-fetch to allow filtering
         url = f"{GAMMA_API_BASE}/markets"
 
@@ -129,8 +129,21 @@ class PriceMonitor:
 
         if settings.STRATEGY == "bonereaper":
             import re
-            from datetime import datetime
+            from datetime import datetime, timezone, timedelta
             
+            now = datetime.now(timezone.utc)
+            window_cutoff = now - timedelta(minutes=10)  # tolak market yang closed > 10 menit lalu
+            
+            def is_in_window(m):
+                end_raw = m.get("endDate") or m.get("endDateIso") or ""
+                if not end_raw:
+                    return True
+                try:
+                    end_dt = datetime.fromisoformat(end_raw.replace("Z", "+00:00"))
+                    return end_dt >= window_cutoff
+                except Exception:
+                    return True
+
             FIVE_MIN_SLUG_PATTERNS = [
                 r"btc-updown-5m",
                 r"eth-updown-5m", 
@@ -143,7 +156,7 @@ class PriceMonitor:
             for m in markets:
                 target_str = (m.get("slug", "") + " " + m.get("question", "")).lower()
                 # Gate 1: Regex is sufficient as Polymarket's `startDate` is now 24h in advance, breaking duration checks.
-                if regex_combined.search(target_str):
+                if regex_combined.search(target_str) and is_in_window(m):
                     filtered_markets.append(m)
             markets = filtered_markets
 
