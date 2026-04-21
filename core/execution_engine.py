@@ -16,7 +16,13 @@ except ImportError:
 class ExecutionEngine:
     """
     ExecutionEngine handles placing orders across the Polymarket CLOB.
-    It supports 'paper' and 'live' modes.
+    Supports 'paper' and 'live' modes.
+
+    Status logic (paper mode):
+    - ENTRY signal  → status = "FILLED"  (leg open, not yet resolved)
+    - HEDGE signal with spread > 0 → status = "WIN"
+    - HEDGE signal with spread <= 0 → status = "LOSS" (paid too much combined)
+    - CUT_LOSS signal → status = "LOSS" (forced hedge at bad price)
     """
 
     def __init__(self, mode: str, risk_manager: RiskManager, data_logger: DataLogger):
@@ -25,12 +31,12 @@ class ExecutionEngine:
         self.data_logger = data_logger
         self.logger = logging.getLogger(self.__class__.__name__)
         self.client = None
-        
+
         if self.mode == "live":
             if not CLOB_AVAILABLE:
                 self.logger.critical("py-clob-client is not installed! Cannot run in live mode.")
                 raise ImportError("py-clob-client required for live mode.")
-            
+
             settings.validate()
             creds = ApiCreds(
                 api_key=settings.POLY_API_KEY,
@@ -43,41 +49,42 @@ class ExecutionEngine:
                 chain_id=POLYGON,
                 creds=creds
             )
-            
+
     async def execute_arbitrage(self, signal: Dict[str, Any]) -> bool:
         """
-        Executes a single-sided leg order based on the Asymmetric signal.
+        Executes a single-sided leg order based on the signal.
+        Returns True if execution succeeded and was logged.
         """
         market_id = signal.get("market_id")
-        side = signal.get("side") # "YES" or "NO"
+        side = signal.get("side")  # "YES" or "NO"
         token_id = signal.get("yes_token_id") if side == "YES" else signal.get("no_token_id")
         execution_price = signal.get("execution_price", 0.0)
-        
-        # 1. Ask RiskManager if we are allowed to take this trade
+        reason = signal.get("reason", "")  # "ENTRY" | "HEDGE" | "CUT_LOSS" | ""
+
+        # 1. Risk gate
         risk_evaluation = self.risk_manager.evaluate_trade(signal)
         if not risk_evaluation.get("allowed"):
             self.logger.warning(f"Trade rejected by RiskManager: {risk_evaluation.get('reason')}")
             return False
 
         position_size = risk_evaluation.get("recommended_size_usd", 10.0)
-        
-        # Approximate size in shares to buy
+
         if execution_price > 0:
             share_size = round(position_size / execution_price, 2)
         else:
             share_size = 0.0
 
         self.logger.info(
-            f"Executing {side} leg | Mode: {self.mode.upper()} "
-            f"| Size: ${position_size:.2f} ({share_size} shares) | Token: {str(token_id)[:10]}..."
+            f"Executing {side} leg [{reason}] | Mode: {self.mode.upper()} "
+            f"| Size: ${position_size:.2f} ({share_size} shares) @ {execution_price:.3f}"
         )
 
-        # 2. API Execution
-        await asyncio.sleep(0.1) # 100ms realistic mock latency
-        
+        # 2. Simulated latency
+        await asyncio.sleep(0.1)
+
+        # 3. Order placement
         if self.mode == "live":
             try:
-                # FOK Limit order
                 order_args = OrderArgs(
                     price=execution_price,
                     size=share_size,
@@ -92,28 +99,63 @@ class ExecutionEngine:
             except Exception as e:
                 self.logger.error(f"CLOB Request Exception: {e}")
                 return False
-                
+
         elif self.mode == "paper":
             import random
             if random.random() > 0.75:
-                self.logger.warning(f"Paper mode: Execution FAILED (simulated liquidity miss)")
+                self.logger.warning("Paper mode: Execution FAILED (simulated liquidity miss)")
                 return False
         else:
             self.logger.error(f"Unknown mode '{self.mode}'")
             return False
 
-        # 3. Log the successful execution
-        estimated_profit = position_size * signal.get("estimated_profit_per_share", 0.0)
+        # 4. Determine status and realized P&L based on signal reason
+        spread = signal.get("spread", 0.0)
+        estimated_profit_per_share = signal.get("estimated_profit_per_share", 0.0)
+
+        if self.mode == "paper":
+            if reason == "HEDGE":
+                if spread > 0 and estimated_profit_per_share > 0:
+                    # Profitable hedge: combined cost < 1.00 - gas
+                    status = "WIN"
+                    estimated_profit = position_size * estimated_profit_per_share
+                else:
+                    # Hedge completed but spread negative = net loss
+                    status = "LOSS"
+                    estimated_profit = position_size * estimated_profit_per_share  # will be negative
+            elif reason == "CUT_LOSS":
+                # Forced hedge near market close at bad price
+                status = "LOSS"
+                # Loss = what we paid for entry leg, no recovery spread
+                entry_cost = execution_price  # cost of THIS (hedge) leg
+                # We don't know entry leg cost here, so approximate: lose the gas + slippage
+                # Conservative: log as negative of position_size * execution_price fraction
+                combined_cost = signal.get("yes_price", 0.0) + signal.get("no_price", 0.0)
+                loss_spread = 1.00 - combined_cost  # likely negative
+                estimated_profit = position_size * (loss_spread - 0.005)
+            else:
+                # ENTRY leg or unknown: position open, not yet resolved
+                status = "FILLED"
+                estimated_profit = 0.0  # unrealized
+        else:
+            # Live mode: actual resolution handled by blockchain
+            status = "FILLED"
+            estimated_profit = 0.0
+
+        # 5. Log trade
         self.data_logger.log_trade({
             "market_id": market_id,
             "mode": self.mode,
             "size_usd": position_size,
-            "spread": signal.get("spread", 0.0),
+            "spread": spread,
             "estimated_profit": estimated_profit,
-            "status": "WIN" if self.mode == "paper" else "FILLED"
+            "status": status
         })
-        
+
         self.risk_manager.register_leg_fill(market_id, side, execution_price, position_size)
-        self.logger.info(f"Executed {side} on {market_id[:30]} | Filled @ {execution_price:.3f}")
+        self.logger.info(
+            f"Logged {status} | {side} on {str(market_id)[:30]} "
+            f"@ {execution_price:.3f} | P&L: ${estimated_profit:.4f}"
+        )
 
         return True
