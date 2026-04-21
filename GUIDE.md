@@ -130,6 +130,12 @@ MAX_POSITION_USD=50       # Ukuran posisi maksimal per trade ($)
 DAILY_LOSS_LIMIT=30       # Bot berhenti otomatis jika rugi > $30/hari
 MAX_OPEN_POSITIONS=3      # Maksimal posisi terbuka bersamaan
 
+# ── BoneReaper Strategy ─────────────────────────────
+STRATEGY=bonereaper           # arb | bonereaper
+ENTRY_PRICE_THRESHOLD=0.42    # Tingkat implied prob maskimal untuk entry
+HEDGE_TRIGGER_SECONDS=45      # Batas waktu hold sebelum paksa cari posisi hedge
+MAX_COMBINED_COST=0.96        # Maks price gabungan YES+NO (spread 4%)
+
 # ── Mode ─────────────────────────────────────────────
 TRADING_MODE=paper        # Gunakan 'paper' dulu, 'live' hanya saat siap
 
@@ -152,6 +158,10 @@ DB_PATH=./data/trades.db
 | `MAX_POSITION_USD` | Batas keras ukuran posisi per trade | `$25–50` |
 | `DAILY_LOSS_LIMIT` | Circuit breaker harian — bot auto-halt | Maks 5% modal |
 | `MAX_OPEN_POSITIONS` | Batas eksposur simultan | `2–3` |
+| `STRATEGY` | Strategi trading bot (`arb` atau `bonereaper`) | `bonereaper` |
+| `ENTRY_PRICE_THRESHOLD` | Threshold entry khusus `bonereaper` pada harga murah | `0.42` |
+| `HEDGE_TRIGGER_SECONDS` | Cut-loss timer khusus `bonereaper` | `45` |
+| `MAX_COMBINED_COST` | Maximum net price untuk hedge di `bonereaper` | `0.96` |
 
 ---
 
@@ -173,17 +183,18 @@ Gunakan script pembaca berikut untuk menampilkannya ke terminal:
 venv\Scripts\python utils/view_trades.py
 ```
 
-# Catch the current active window
+### Script Dukungan (Market Discovery)
+
+Membantu mencari market aktif yang bisa dipasangkan dengan bot.
+```bash
+# Pantau current active window timeframe 5m
 python utils/market_discovery.py --timeframe 5m
 
-# Auto-refresh every 30s — catches new windows as they open
+# Auto-refresh tiap 30s (cocok dibiarkan di terminal terpisah)
 python utils/market_discovery.py --timeframe 5m --watch
 
-# See all short-window markets across timeframes
+# Lihat semua short-window market lintas timeframe
 python utils/market_discovery.py --timeframe all --limit 50
-
-```bash
-python main.py --mode paper
 ```
 
 ### Dengan parameter tambahan
@@ -207,6 +218,7 @@ python main.py --mode paper --market BTC-UP-DOWN-15M
 | Flag | Default | Deskripsi |
 |---|---|---|
 | `--mode` | `paper` | Mode trading: `paper` atau `live` |
+| `--strategy` | `arb` | Strategi: `arb` (standard) atau `bonereaper` |
 | `--min-spread` | `0.020` | Threshold spread minimum |
 | `--max-pos` | `50.0` | Ukuran posisi maks per trade (USD) |
 | `--log-level` | `INFO` | Verbositas log: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
@@ -538,8 +550,8 @@ Selesaikan **semua item** sebelum switch ke live mode:
 ## Referensi Cepat
 
 ```bash
-# Jalankan paper mode
-python main.py --mode paper
+# Jalankan paper mode (strategy bonereaper)
+python main.py --mode paper --strategy bonereaper
 
 # Jalankan dengan debug penuh
 python main.py --mode paper --log-level DEBUG
@@ -554,7 +566,7 @@ python utils/report.py --period 7d
 python -c "from config.settings import validate; validate()"
 
 # Jalankan live mode
-python main.py --mode live
+python main.py --mode live --strategy bonereaper
 ```
 
 ---
