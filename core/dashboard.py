@@ -134,6 +134,13 @@ class Dashboard:
         elif status == "LOSS":
             self.state.loss_count += 1
 
+        # Jika sudah WIN atau LOSS (posisi closed/resolved), 
+        # maka bersihkan dari tabel Live Opportunities.
+        if status in ["WIN", "LOSS", "REJECTED"]:
+            self.state.opportunities = [
+                o for o in self.state.opportunities if o.market_id != trade.get("market_id")
+            ]
+
     # ------------------------------------------------------------------
     # Rendering
     # ------------------------------------------------------------------

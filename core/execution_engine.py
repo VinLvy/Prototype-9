@@ -1,6 +1,6 @@
 import logging
 import asyncio
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from .risk_manager import RiskManager
 from .data_logger import DataLogger
 import config.settings as settings
@@ -50,10 +50,10 @@ class ExecutionEngine:
                 creds=creds
             )
 
-    async def execute_arbitrage(self, signal: Dict[str, Any]) -> bool:
+    async def execute_arbitrage(self, signal: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
         Executes a single-sided leg order based on the signal.
-        Returns True if execution succeeded and was logged.
+        Returns the trade_record dict if execution succeeded and was logged, else None.
         """
         market_id = signal.get("market_id")
         side = signal.get("side")  # "YES" or "NO"
@@ -65,7 +65,7 @@ class ExecutionEngine:
         risk_evaluation = self.risk_manager.evaluate_trade(signal)
         if not risk_evaluation.get("allowed"):
             self.logger.warning(f"Trade rejected by RiskManager: {risk_evaluation.get('reason')}")
-            return False
+            return None
 
         position_size = risk_evaluation.get("recommended_size_usd", 10.0)
 
@@ -95,19 +95,16 @@ class ExecutionEngine:
                 resp = self.client.post_order(signed_order, order_type=OrderType.FOK)
                 if getattr(resp, "error_msg", None) or getattr(resp, "success", False) is False:
                     self.logger.warning(f"Live mode execution failed: {resp}")
-                    return False
+                    return None
             except Exception as e:
                 self.logger.error(f"CLOB Request Exception: {e}")
-                return False
+                return None
 
         elif self.mode == "paper":
-            import random
-            if random.random() > 0.75:
-                self.logger.warning("Paper mode: Execution FAILED (simulated liquidity miss)")
-                return False
+            pass # Selalu sukses di paper mode agar status state machine tetap tersinkron
         else:
             self.logger.error(f"Unknown mode '{self.mode}'")
-            return False
+            return None
 
         # 4. Determine status and realized P&L based on signal reason
         spread = signal.get("spread", 0.0)
@@ -143,14 +140,15 @@ class ExecutionEngine:
             estimated_profit = 0.0
 
         # 5. Log trade
-        self.data_logger.log_trade({
+        trade_record = {
             "market_id": market_id,
             "mode": self.mode,
             "size_usd": position_size,
             "spread": spread,
             "estimated_profit": estimated_profit,
             "status": status
-        })
+        }
+        self.data_logger.log_trade(trade_record)
 
         self.risk_manager.register_leg_fill(market_id, side, execution_price, position_size)
         self.logger.info(
@@ -158,4 +156,4 @@ class ExecutionEngine:
             f"@ {execution_price:.3f} | P&L: ${estimated_profit:.4f}"
         )
 
-        return True
+        return trade_record
