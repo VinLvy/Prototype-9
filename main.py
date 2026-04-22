@@ -26,19 +26,7 @@ except ImportError as e:
     sys.exit(1)
 
 
-async def generate_interim_stats_report(count: int, dlogger):
-    """Write an interim stats summary to a file to avoid messing up the TUI."""
-    import os
-    os.makedirs("./data", exist_ok=True)
-    report_file = f"./data/interim_report_{count}.txt"
-    try:
-        with open(report_file, "w") as f:
-            f.write(f"--- INTERIM STATS REPORT ({count} Paper Trades) ---\n")
-            f.write("Generated asynchronously while bot continues running.\n")
-            f.write(f"Total Trades Logged in this session: {count}\n")
-        logging.getLogger().warning(f"Interim stats report generated at {report_file}")
-    except Exception as e:
-        logging.getLogger().error(f"Failed to write interim report: {e}")
+
 
 async def main_loop(args: argparse.Namespace):
     """
@@ -47,7 +35,10 @@ async def main_loop(args: argparse.Namespace):
     # 1. Initialize core components
     dashboard = Dashboard()
     dashboard.set_mode(args.mode)
-    data_logger = DataLogger(db_path="./data/trades.db")
+    
+    db_file = "./data/bonereaper_trades.db" if args.strategy == "bonereaper" else "./data/trades.db"
+    data_logger = DataLogger(db_path=db_file)
+    
     risk_manager = RiskManager(
         max_position_usd=args.max_pos,
         daily_loss_limit=30.0, # Could be from settings/args
@@ -105,21 +96,9 @@ async def main_loop(args: argparse.Namespace):
         paper_trade_count = 0
         while True:
             signal = await execution_signal_queue.get()
-            success = await execution_engine.execute_arbitrage(signal)
-            if success:
-                trade_record = {
-                    "market_id": signal.get("market_id"),
-                    "spread": signal.get("spread", 0.0),
-                    "estimated_profit": signal.get("estimated_profit_per_share", 0.0),
-                    "status": "WIN" if args.mode == "paper" else "FILLED",
-                }
+            trade_record = await execution_engine.execute_arbitrage(signal)
+            if trade_record:
                 dashboard.record_execution(trade_record)
-                
-                if args.mode == "paper":
-                    paper_trade_count += 1
-                    if paper_trade_count > 0 and paper_trade_count % 20 == 0:
-                        asyncio.create_task(generate_interim_stats_report(paper_trade_count, data_logger))
-                        
             execution_signal_queue.task_done()
 
     # 4. Start all tasks concurrently
