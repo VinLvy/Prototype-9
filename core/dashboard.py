@@ -46,6 +46,8 @@ class ExecutionRecord:
     spread_pct: float
     pnl: float              # positive = win, negative = loss
     status: str             # "WIN" | "LOSS" | "FILLED" | "REJECTED"
+    entry_price: float = 0.0
+    exit_price: float = 0.0
 
 
 @dataclass
@@ -123,6 +125,8 @@ class Dashboard:
             spread_pct=trade.get("spread", 0.0),
             pnl=pnl,
             status=status,
+            entry_price=trade.get("entry_price", 0.0),
+            exit_price=trade.get("exit_price", 0.0),
         )
 
         self.state.log.appendleft(rec)
@@ -222,6 +226,8 @@ class Dashboard:
         table.add_column("Time", style="dim", width=10)
         table.add_column("Status", width=6)
         table.add_column("Market", style="white")
+        table.add_column("Entry", justify="right", style="dim")
+        table.add_column("Exit", justify="right", style="dim")
         table.add_column("Spread", justify="right", style="cyan")
         table.add_column("P&L", justify="right")
 
@@ -232,10 +238,14 @@ class Dashboard:
                 status_color = "green" if rec.status == "WIN" else "red" if rec.status == "LOSS" else "yellow"
                 pnl_str = f"+${rec.pnl:.2f}" if rec.pnl >= 0 else f"-${abs(rec.pnl):.2f}"
                 pnl_color = "green" if rec.pnl >= 0 else "red"
+                entry_str = f"{rec.entry_price:.3f}" if rec.entry_price > 0 else "-"
+                exit_str = f"{rec.exit_price:.3f}" if rec.exit_price > 0 else "-"
                 table.add_row(
                     rec.timestamp.strftime("%H:%M:%S"),
                     f"[{status_color}]{rec.status}[/{status_color}]",
-                    rec.market_id,
+                    rec.market_id[:15] + "..." if len(rec.market_id) > 15 else rec.market_id,
+                    entry_str,
+                    exit_str,
                     f"{rec.spread_pct * 100:.1f}%",
                     f"[{pnl_color}]{pnl_str}[/{pnl_color}]",
                 )
