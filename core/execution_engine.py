@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import aiohttp
 from typing import Dict, Any, Optional
 from .risk_manager import RiskManager
 from .data_logger import DataLogger
@@ -50,6 +51,23 @@ class ExecutionEngine:
                 creds=creds
             )
 
+    async def _check_liquidity(self, token_id: str, required_size: float) -> bool:
+        """Check depth at best_ask level before placing order."""
+        try:
+            async with aiohttp.ClientSession() as session:
+                url = f"https://clob.polymarket.com/book?token_id={token_id}"
+                async with session.get(url) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        asks = data.get("asks", [])
+                        if asks:
+                            best_ask = asks[0]
+                            available_size = float(best_ask.get("size", 0.0))
+                            return available_size >= required_size
+        except Exception as e:
+            self.logger.error(f"Liquidity check failed for {token_id}: {e}")
+        return False
+
     async def execute_arbitrage(self, signal: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
         Executes a single-sided leg order based on the signal.
@@ -84,6 +102,11 @@ class ExecutionEngine:
 
         # 3. Order placement
         if self.mode == "live":
+            has_liquidity = await self._check_liquidity(token_id, share_size)
+            if not has_liquidity:
+                self.logger.warning(f"Liquidity check failed: available size at best_ask < {share_size} for {token_id}")
+                return None
+
             try:
                 order_args = OrderArgs(
                     price=execution_price,
@@ -137,13 +160,17 @@ class ExecutionEngine:
             estimated_profit = 0.0
 
         # 5. Log trade
+        actual_entry_price = signal.get("entry_price", execution_price)
         trade_record = {
             "market_id": market_id,
             "mode": self.mode,
             "size_usd": position_size,
             "spread": spread,
             "estimated_profit": estimated_profit,
-            "status": status
+            "status": status,
+            "reason": reason,
+            "entry_price": actual_entry_price,
+            "exit_price": execution_price if reason in ["HEDGE", "CUT_LOSS"] else 0.0
         }
         self.data_logger.log_trade(trade_record)
 
