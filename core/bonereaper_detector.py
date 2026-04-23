@@ -101,6 +101,7 @@ class BoneReaperDetector:
             self.market_states[market_id]["state"] = "HEDGED"
 
             signal = self._create_signal(tick, hedge_side, hedge_price, reason="CUT_LOSS")
+            signal["entry_price"] = state["entry_price"]
             signal["spread"] = spread
             signal["estimated_profit_per_share"] = estimated_profit
             return signal

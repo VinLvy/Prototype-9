@@ -123,12 +123,9 @@ class ExecutionEngine:
             elif reason == "CUT_LOSS":
                 # Forced hedge near market close at bad price
                 status = "LOSS"
-                # Loss = what we paid for entry leg, no recovery spread
-                entry_cost = execution_price  # cost of THIS (hedge) leg
-                # We don't know entry leg cost here, so approximate: lose the gas + slippage
-                # Conservative: log as negative of position_size * execution_price fraction
-                combined_cost = signal.get("yes_price", 0.0) + signal.get("no_price", 0.0)
-                loss_spread = 1.00 - combined_cost  # likely negative
+                actual_entry_price = signal.get("entry_price", execution_price)
+                actual_combined = actual_entry_price + execution_price
+                loss_spread = 1.00 - actual_combined
                 estimated_profit = position_size * (loss_spread - 0.005)
             else:
                 # ENTRY leg or unknown: position open, not yet resolved
