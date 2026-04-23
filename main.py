@@ -81,6 +81,26 @@ async def main_loop(args: argparse.Namespace):
         """Task to consume price updates and detect arbitrage opportunities."""
         while True:
             price_tick = await price_update_queue.get()
+            
+            if price_tick.get("event") == "MARKET_RESOLVED":
+                market_id = price_tick["market_id"]
+                risk_manager.clear_position(market_id, pnl=0.0)
+                
+                if hasattr(detector, 'market_states'):
+                    state = detector.market_states.pop(market_id, None)
+                    if state and state.get("state") == "ENTERED":
+                        # We had an open single leg that never hedged before close
+                        estimated_entry_cost = state.get("entry_price", 0.0) * args.max_pos
+                        dashboard.record_execution({
+                            "market_id": market_id,
+                            "mode": args.mode,
+                            "status": "LOSS",
+                            "spread": 0.0,
+                            "estimated_profit": -estimated_entry_cost
+                        })
+                price_update_queue.task_done()
+                continue
+
             if args.strategy == "bonereaper":
                 signal = detector.calculate_signal(price_tick)
             else:

@@ -67,6 +67,7 @@ STRATEGY: str = _get("STRATEGY", "arb").lower()  # 'arb' | 'bonereaper'
 ENTRY_PRICE_THRESHOLD: float = _get_float("ENTRY_PRICE_THRESHOLD", 0.42)
 HEDGE_TRIGGER_SECONDS: float = _get_float("HEDGE_TRIGGER_SECONDS", 45.0)
 MAX_COMBINED_COST: float = _get_float("MAX_COMBINED_COST", 0.96)
+ALLOWED_ASSETS = ["btc", "eth", "sol", "xrp"]  # exclude doge, hype untuk live awal
 # ---------------------------------------------------------------------------
 # Mode
 # ---------------------------------------------------------------------------
