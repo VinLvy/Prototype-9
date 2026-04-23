@@ -129,9 +129,9 @@ class PriceMonitor:
 
             now = datetime.now(timezone.utc)
 
-            allowed_str = "|".join(settings.ALLOWED_ASSETS)
             FIVE_MIN = re.compile(
-                rf"(?:{allowed_str})-updown-5m",
+                r"btc-updown-5m|eth-updown-5m|sol-updown-5m"
+                r"|xrp-updown-5m|bnb-updown-5m",
                 re.IGNORECASE
             )
 
@@ -167,7 +167,8 @@ class PriceMonitor:
                     ) as resp:
                         fallback_raw = await resp.json()
                 FIFTEEN = re.compile(
-                    rf"(?:{allowed_str})-updown-15m",
+                    r"btc-updown-15m|eth-updown-15m|sol-updown-15m"
+                    r"|xrp-updown-15m|bnb-updown-15m",
                     re.IGNORECASE
                 )
                 filtered = [
@@ -336,27 +337,15 @@ class PriceMonitor:
         elif event_type in ("market_resolved", "market_closed", "closed", "resolved"):
             condition_id = msg.get("condition_id")
             asset_id = msg.get("asset_id")
-            resolved_meta = None
             
             if condition_id:
                 # Clear all assets associated with this condition
                 for asset, meta in self._token_map.items():
                     if meta.get("condition_id") == condition_id and asset in self._price_state:
                         self._price_state[asset] = {"best_bid": 0.0, "best_ask": 0.0}
-                        resolved_meta = meta
             
             if asset_id and asset_id in self._price_state:
                 self._price_state[asset_id] = {"best_bid": 0.0, "best_ask": 0.0}
-                if not resolved_meta and asset_id in self._token_map:
-                    resolved_meta = self._token_map[asset_id]
-
-            if resolved_meta:
-                return {
-                    "market_id": resolved_meta["market_id"],
-                    "event": "MARKET_RESOLVED",
-                    "condition_id": resolved_meta["condition_id"],
-                    "timestamp": ts,
-                }
 
         else:
             return None  # new_market, tick_size_change — not relevant here
