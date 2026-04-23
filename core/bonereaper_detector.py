@@ -29,6 +29,7 @@ class BoneReaperDetector:
     """
 
     GAS_FACTOR = 0.005  # simulated gas cost per share
+    SLIPPAGE_BUFFER = 0.03  # 3% untuk low-liquidity 5m markets
 
     def __init__(self, risk_manager=None):
         self.risk_manager = risk_manager
@@ -134,10 +135,10 @@ class BoneReaperDetector:
             # CRITICAL CHECK: verify hedge is POSSIBLE at profit from current prices
             # If other side is already too expensive, entering guarantees a loss
             best_case_combined = target_price + other_price
-            if best_case_combined > self.max_combined_cost:
+            if best_case_combined > (self.max_combined_cost - self.SLIPPAGE_BUFFER):
                 self.logger.debug(
                     f"[{market_id}] Skipped Entry: best-case combined "
-                    f"{best_case_combined:.3f} > MAX_COMBINED_COST {self.max_combined_cost} "
+                    f"{best_case_combined:.3f} > MAX_COMBINED_COST - SLIPPAGE {self.max_combined_cost - self.SLIPPAGE_BUFFER:.3f} "
                     f"— hedge impossible at profit"
                 )
                 return None
@@ -185,10 +186,10 @@ class BoneReaperDetector:
             current_other_price = no_price if hedge_side == "NO" else yes_price
             combined_cost = entry_cost + current_other_price
 
-            if combined_cost > self.max_combined_cost:
+            if combined_cost > (self.max_combined_cost - self.SLIPPAGE_BUFFER):
                 self.logger.debug(
                     f"[{market_id}] Hedge rejected: combined {combined_cost:.3f} "
-                    f"> max {self.max_combined_cost}"
+                    f"> max {self.max_combined_cost - self.SLIPPAGE_BUFFER:.3f} (incl. slippage buffer)"
                 )
                 return None
 
@@ -205,6 +206,7 @@ class BoneReaperDetector:
             )
 
             signal = self._create_signal(tick, hedge_side, current_other_price, reason="HEDGE")
+            signal["entry_price"] = entry_cost
             signal["spread"] = spread
             signal["estimated_profit_per_share"] = estimated_profit
             return signal
