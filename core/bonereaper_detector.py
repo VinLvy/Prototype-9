@@ -88,7 +88,7 @@ class BoneReaperDetector:
                 pass
 
         # --- Hard Cut Loss: < 60s to close, still single-legged ---
-        if time_to_close_seconds <= 60 and state["state"] == "ENTERED":
+        if time_to_close_seconds <= 60 and state["state"] == "PENDING_HEDGE":
             hedge_side = "NO" if state["entry_side"] == "YES" else "YES"
             hedge_price = no_price if hedge_side == "NO" else yes_price
             combined_cost = state["entry_price"] + hedge_price
@@ -146,34 +146,31 @@ class BoneReaperDetector:
 
         # --- ENTRY ---
         if state["state"] == "IDLE":
-            # Pick the cheaper side
+            combined = yes_price + no_price
+            
+            # Syarat 1: combined harus sudah profitable sekarang
+            if combined > self.max_combined_cost:
+                return None
+            
+            # Syarat 2: spread harus cukup besar untuk cover gas + slippage
+            spread = 1.00 - combined
+            if spread < 0.04:  # minimum 4% untuk cover gas + slippage live
+                return None
+            
+            # Syarat 3: combined harus realistis (tidak terlalu murah = tidak liquid)
+            if combined < 0.80:
+                return None
+
             target_side = "YES" if yes_price < no_price else "NO"
             target_price = yes_price if target_side == "YES" else no_price
-            other_price = no_price if target_side == "YES" else yes_price
-
-            if target_price > self.entry_threshold:
-                self.logger.debug(
-                    f"[{market_id}] Skipped Entry: {target_side}={target_price:.3f} "
-                    f"> threshold {self.entry_threshold}"
-                )
-                return None
-
-            # CRITICAL CHECK: verify hedge is POSSIBLE at profit from current prices
-            # If other side is already too expensive, entering guarantees a loss
-            best_case_combined = target_price + other_price
-            if best_case_combined > (self.max_combined_cost - self.SLIPPAGE_BUFFER):
-                self.logger.debug(
-                    f"[{market_id}] Skipped Entry: best-case combined "
-                    f"{best_case_combined:.3f} > MAX_COMBINED_COST - SLIPPAGE {self.max_combined_cost - self.SLIPPAGE_BUFFER:.3f} "
-                    f"— hedge impossible at profit"
-                )
-                return None
-
+            hedge_side = "NO" if target_side == "YES" else "YES"
+            
             self.market_states[market_id].update({
-                "state": "ENTERED",
+                "state": "PENDING_HEDGE",
                 "entry_side": target_side,
                 "entry_price": target_price,
-                "entry_time": current_time
+                "entry_time": current_time,
+                "hedge_side": hedge_side
             })
 
             # Kelly sizing
@@ -186,42 +183,24 @@ class BoneReaperDetector:
                 max_position_usd=self.max_pos_usd
             )
 
-            # Projected profit if hedge achieved at current other_price
-            projected_combined = target_price + other_price
-            projected_spread = 1.00 - projected_combined
-            projected_profit = projected_spread - self.GAS_FACTOR
+            projected_profit = spread - self.GAS_FACTOR
 
             signal = self._create_signal(tick, target_side, target_price, reason="ENTRY", size_usd=kelly_size)
-            # Note: ENTRY profit is PROJECTED, not realized. Mark clearly.
-            signal["spread"] = projected_spread
+            signal["spread"] = spread
             signal["estimated_profit_per_share"] = projected_profit
             return signal
 
         # --- HEDGE ---
-        elif state["state"] == "ENTERED":
-            time_held = current_time - state["entry_time"]
+        elif state["state"] == "PENDING_HEDGE":
             entry_cost = state["entry_price"]
-
-            if time_held <= self.hedge_trigger_seconds:
-                self.logger.debug(
-                    f"[{market_id}] Waiting to hedge: {time_held:.1f}s / {self.hedge_trigger_seconds}s"
-                )
-                return None
-
-            hedge_side = "NO" if state["entry_side"] == "YES" else "YES"
+            hedge_side = state["hedge_side"]
             current_other_price = no_price if hedge_side == "NO" else yes_price
+            
             combined_cost = entry_cost + current_other_price
-
-            if combined_cost > (self.max_combined_cost - self.SLIPPAGE_BUFFER):
-                self.logger.debug(
-                    f"[{market_id}] Hedge rejected: combined {combined_cost:.3f} "
-                    f"> max {self.max_combined_cost - self.SLIPPAGE_BUFFER:.3f} (incl. slippage buffer)"
-                )
-                return None
 
             # Valid hedge
             spread = 1.00 - combined_cost
-            estimated_profit = spread - self.GAS_FACTOR  # could be negative if spread < gas
+            estimated_profit = spread - self.GAS_FACTOR
 
             self.market_states[market_id]["state"] = "HEDGED"
 
