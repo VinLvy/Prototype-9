@@ -92,14 +92,34 @@ class BoneReaperDetector:
             hedge_side = "NO" if state["entry_side"] == "YES" else "YES"
             hedge_price = no_price if hedge_side == "NO" else yes_price
             combined_cost = state["entry_price"] + hedge_price
-            spread = 1.00 - combined_cost
-            estimated_profit = spread - self.GAS_FACTOR  # likely negative = loss
 
             if state["entry_price"] <= 0:
                 self.logger.error(
                     f"[{market_id}] CUT_LOSS aborted: entry_price={state['entry_price']} is invalid."
                 )
                 return None  # Do not emit a broken signal
+
+            # GUARD: jika hedge price tidak realistis (combined > 1.10),
+            # jangan eksekusi hedge — catat loss sebesar entry capital saja
+            MAX_ACCEPTABLE_COMBINED = 1.05  # toleransi 5% slippage maksimum
+            
+            if combined_cost > MAX_ACCEPTABLE_COMBINED:
+                self.logger.warning(
+                    f"[{market_id}] CUT_LOSS ABORTED: hedge_price={hedge_price:.3f} "
+                    f"tidak realistis. Combined={combined_cost:.3f} > {MAX_ACCEPTABLE_COMBINED}. "
+                    f"Mencatat sebagai full entry loss."
+                )
+                # Catat loss = entry capital saja, tanpa phantom hedge
+                self.market_states[market_id]["state"] = "HEDGED"
+                signal = self._create_signal(tick, hedge_side, hedge_price, reason="CUT_LOSS")
+                signal["entry_price"] = state["entry_price"]
+                # Spread = 0 - entry_price (kehilangan entry saja, bukan overpay hedge)
+                signal["spread"] = -(state["entry_price"])
+                signal["estimated_profit_per_share"] = -(state["entry_price"]) - self.GAS_FACTOR
+                return signal
+            
+            spread = 1.00 - combined_cost
+            estimated_profit = spread - self.GAS_FACTOR
 
             self.logger.warning(
                 f"[{market_id}] CUT_LOSS: {time_to_close_seconds:.0f}s left. "
