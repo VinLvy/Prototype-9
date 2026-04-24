@@ -136,41 +136,51 @@ class ExecutionEngine:
         if self.mode == "paper":
             if reason == "HEDGE":
                 if spread > 0 and estimated_profit_per_share > 0:
-                    # Profitable hedge: combined cost < 1.00 - gas
                     status = "WIN"
-                    estimated_profit = position_size * estimated_profit_per_share
+                    # estimated_profit_per_share is already net of gas (set by detector)
+                    # position_size is in USD for this leg; use per-share ratio × size
+                    estimated_profit = round(position_size * estimated_profit_per_share, 4)
                 else:
-                    # Hedge completed but spread negative = net loss
                     status = "LOSS"
-                    estimated_profit = position_size * estimated_profit_per_share  # will be negative
+                    estimated_profit = round(position_size * estimated_profit_per_share, 4)
+
             elif reason == "CUT_LOSS":
-                # Forced hedge near market close at bad price
                 status = "LOSS"
-                actual_entry_price = signal.get("entry_price", execution_price)
-                actual_combined = actual_entry_price + execution_price
-                loss_spread = 1.00 - actual_combined
-                estimated_profit = position_size * (loss_spread - 0.005)
+                # entry_price is attached to the signal by bonereaper_detector
+                entry_price = signal.get("entry_price")
+                if entry_price and entry_price > 0 and execution_price > 0:
+                    actual_combined = entry_price + execution_price
+                    loss_spread = 1.00 - actual_combined          # negative = overpaid
+                    net_ratio   = loss_spread - 0.005             # subtract gas
+                    estimated_profit = round(position_size * net_ratio, 4)
+                else:
+                    # Fallback: use whatever the detector pre-computed
+                    estimated_profit = round(
+                        position_size * signal.get("estimated_profit_per_share", -0.005), 4
+                    )
+
             else:
-                # ENTRY leg or unknown: position open, not yet resolved
+                # ENTRY leg: position open, unrealized
                 status = "FILLED"
-                estimated_profit = 0.0  # unrealized
+                estimated_profit = 0.0
         else:
-            # Live mode: actual resolution handled by blockchain
             status = "FILLED"
             estimated_profit = 0.0
 
         # 5. Log trade
-        actual_entry_price = signal.get("entry_price", execution_price)
+        # For CUT_LOSS/HEDGE: exit_price = the hedge execution price (current leg)
+        # For ENTRY: exit_price = 0 (unrealized)
+        is_closing_leg = reason in ["HEDGE", "CUT_LOSS"]
         trade_record = {
-            "market_id": market_id,
-            "mode": self.mode,
-            "size_usd": position_size,
-            "spread": spread,
+            "market_id":        market_id,
+            "mode":             self.mode,
+            "size_usd":         position_size,
+            "spread":           spread,
             "estimated_profit": estimated_profit,
-            "status": status,
-            "reason": reason,
-            "entry_price": actual_entry_price,
-            "exit_price": execution_price if reason in ["HEDGE", "CUT_LOSS"] else 0.0
+            "status":           status,
+            "reason":           reason,
+            "entry_price":      signal.get("entry_price", 0.0) if is_closing_leg else execution_price,
+            "exit_price":       execution_price if is_closing_leg else 0.0,
         }
         self.data_logger.log_trade(trade_record)
 
