@@ -10,13 +10,14 @@
 2. [Instalasi](#2-instalasi)
 3. [Konfigurasi Environment](#3-konfigurasi-environment)
 4. [Menjalankan dalam Paper Mode](#4-menjalankan-dalam-paper-mode)
-5. [Memahami Dashboard TUI](#5-memahami-dashboard-tui)
-6. [Menjalankan Tests](#6-menjalankan-tests)
-7. [Melihat Laporan Performa](#7-melihat-laporan-performa)
-8. [Menjalankan dalam Live Mode](#8-menjalankan-dalam-live-mode)
-9. [Penjelasan Komponen Inti](#9-penjelasan-komponen-inti)
-10. [Troubleshooting](#10-troubleshooting)
-11. [Pre-Live Checklist](#11-pre-live-checklist)
+5. [Strategi Copy Trade](#5-strategi-copy-trade)
+6. [Memahami Dashboard TUI](#6-memahami-dashboard-tui)
+7. [Menjalankan Tests](#7-menjalankan-tests)
+8. [Melihat Laporan Performa](#8-melihat-laporan-performa)
+9. [Menjalankan dalam Live Mode](#9-menjalankan-dalam-live-mode)
+10. [Penjelasan Komponen Inti](#10-penjelasan-komponen-inti)
+11. [Troubleshooting](#11-troubleshooting)
+12. [Pre-Live Checklist](#12-pre-live-checklist)
 
 ---
 
@@ -218,11 +219,12 @@ python main.py --mode paper --market BTC-UP-DOWN-15M
 | Flag | Default | Deskripsi |
 |---|---|---|
 | `--mode` | `paper` | Mode trading: `paper` atau `live` |
-| `--strategy` | `arb` | Strategi: `arb` (standard) atau `bonereaper` |
+| `--strategy` | `arb` | Strategi: `arb`, `bonereaper`, `microbonereaper`, `copytrade` |
 | `--min-spread` | `0.020` | Threshold spread minimum |
 | `--max-pos` | `50.0` | Ukuran posisi maks per trade (USD) |
 | `--log-level` | `INFO` | Verbositas log: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `--market` | semua | Fokus ke satu market spesifik |
+| `--target-wallet` | dari `.env` | Wallet target untuk strategi `copytrade` |
 
 ### Menghentikan bot
 
@@ -230,7 +232,86 @@ Tekan `Ctrl + C` untuk shutdown bersih. Bot akan menutup koneksi database dan ta
 
 ---
 
-## 5. Memahami Dashboard TUI
+## 5. Strategi Copy Trade
+
+Strategi **Copy Trade** memantau aktivitas *wallet* Polymarket tertentu secara real-time dan otomatis meniru setiap BUY trade di market 5m/15m crypto Up-Down.
+
+### Cara Kerja
+
+```
+Data API (Polymarket)          CopyTradeWatcher         ExecutionEngine
+      │                               │                       │
+      │── GET /trades?user=0x... ────▶│                       │
+      │   (poll setiap 1.5s)          │── filter BUY only     │
+      │                               │── filter 5m market    │
+      │                               │── resolve YES/NO IDs  │
+      │                               │── emit COPY_ENTRY ───▶│
+      │                               │                       │── RiskManager
+      │                               │                       │── Paper / Live
+      │                               │                       │── DataLogger
+      │                               │                       │── Dashboard
+```
+
+**Mekanisme anti-replay:** Saat pertama kali start, bot membaca 20 trade terakhir dan menyimpan hash-nya *tanpa* mengemit sinyal. Ini mencegah replay trade lama dari masa lalu.
+
+### Setup
+
+**Langkah 1 — Tambahkan wallet target ke `.env`:**
+
+```env
+TARGET_WALLET=0xABCDEF...alamat_wallet_target
+MICRO_BANKROLL=12.00        # Bankroll maksimum copy trade
+```
+
+**Langkah 2 — Jalankan:**
+
+```bash
+# Via .env (TARGET_WALLET sudah diset)
+venv\Scripts\python main.py --mode paper --strategy copytrade
+
+# Via flag langsung
+venv\Scripts\python main.py --mode paper --strategy copytrade --target-wallet 0xABC...
+```
+
+### Filter yang Diterapkan
+
+| Filter | Aturan |
+|---|---|
+| **Trade type** | Hanya `BUY` — SELL/exit tidak di-copy |
+| **Market** | Hanya slug `btc/eth/sol/xrp/bnb-updown-5m` atau `15m` |
+| **Bankroll** | Fixed `$1.00` per trade, maks total `$12.00` |
+| **Duplikasi** | De-duplikasi via `transactionHash` — setiap trade hanya dieksekusi sekali |
+
+### Parameter `.env` Spesifik Copy Trade
+
+| Parameter | Default | Deskripsi |
+|---|---|---|
+| `TARGET_WALLET` | *(wajib)* | Alamat wallet Polymarket yang akan di-copy |
+| `MICRO_BANKROLL` | `12.00` | Total modal maksimum untuk copy trade |
+
+### Database
+
+Semua copy trade tersimpan di file terpisah:
+```
+data/copytrade_trades.db
+```
+
+Lihat riwayat:
+```bash
+venv\Scripts\python utils/view_trades.py --db ./data/copytrade_trades.db
+```
+
+### Catatan Penting
+
+> [!WARNING]
+> Copy trade bergantung pada polling Data API Polymarket (bukan WebSocket). Ada **latency 1.5–3 detik** antara target wallet mengeksekusi trade dan bot kita meniru. Untuk market 5m yang sangat cepat, ini bisa berarti entry di harga yang sudah bergerak.
+
+> [!NOTE]
+> Status trade copy adalah `FILLED` (belum resolved). P&L hanya akan diketahui setelah market selesai — bot tidak otomatis memonitor resolusi market saat ini.
+
+---
+
+## 6. Memahami Dashboard TUI
 
 Saat bot berjalan, terminal akan menampilkan dashboard real-time:
 
@@ -399,17 +480,20 @@ Di minggu pertama live:
 ```
 main.py
   │
-  ├── core/price_monitor.py     → WebSocket: stream harga YES/NO
-  │       ↓
-  ├── core/arb_detector.py      → Hitung spread: YES + NO > 1.00 + fee + threshold?
-  │       ↓ (jika ada sinyal)
-  ├── core/execution_engine.py  → Paper: log saja | Live: POST order ke CLOB
-  │       ↑
-  ├── core/risk_manager.py      → Gate keeper: posisi maks? loss limit? Kelly size?
-  │       ↓
-  ├── core/data_logger.py       → Simpan hasil trade ke SQLite
-  │       ↓
-  └── core/dashboard.py         → Tampilkan TUI real-time di terminal
+  ├── [arb / bonereaper / microbonereaper]
+  │   ├── core/price_monitor.py       → WebSocket: stream harga YES/NO real-time
+  │   ├── core/arb_detector.py        → Hitung spread untuk strategi arb
+  │   ├── core/bonereaper_detector.py → Dual-entry logic untuk BoneReaper
+  │   └── core/micro_bonereaper.py    → BoneReaper + BankrollGuard ($12 cap)
+  │
+  ├── [copytrade]
+  │   └── core/copy_trade_watcher.py  → Poll Data API tiap 1.5s, filter BUY 5m market
+  │
+  ├── core/bankroll_guard.py      → Tracker deployed/available capital
+  ├── core/execution_engine.py    → Paper: log saja | Live: POST order ke CLOB
+  ├── core/risk_manager.py        → Gate keeper: posisi maks? loss limit? Kelly size?
+  ├── core/data_logger.py         → Simpan hasil trade ke SQLite
+  └── core/dashboard.py           → Tampilkan TUI real-time di terminal
 ```
 
 ### Alur sinyal (detail)
@@ -550,23 +634,35 @@ Selesaikan **semua item** sebelum switch ke live mode:
 ## Referensi Cepat
 
 ```bash
-# Jalankan paper mode (strategy bonereaper)
-python main.py --mode paper --strategy bonereaper
+# Paper mode — BoneReaper (algorithmic dual-entry)
+venv\Scripts\python main.py --mode paper --strategy bonereaper
 
-# Jalankan dengan debug penuh
-python main.py --mode paper --log-level DEBUG
+# Paper mode — MicroBoneReaper ($1/trade, bankroll $12)
+venv\Scripts\python main.py --mode paper --strategy microbonereaper
+
+# Paper mode — Copy Trade (monitor wallet target)
+venv\Scripts\python main.py --mode paper --strategy copytrade
+
+# Copy Trade dengan wallet langsung via flag
+venv\Scripts\python main.py --mode paper --strategy copytrade --target-wallet 0xABC...
+
+# Jalankan dengan debug penuh (lihat log copytrade detection)
+venv\Scripts\python main.py --mode paper --strategy copytrade --log-level INFO
 
 # Cek semua test
 pytest tests/ -v
 
-# Laporan 7 hari
-python utils/report.py --period 7d
+# Laporan performa copytrade
+venv\Scripts\python utils/report.py --period 7d --db ./data/copytrade_trades.db
+
+# Laporan performa bonereaper
+venv\Scripts\python utils/report.py --period 7d --db ./data/bonereaper_trades.db
 
 # Validasi settings untuk live
 python -c "from config.settings import validate; validate()"
 
 # Jalankan live mode
-python main.py --mode live --strategy bonereaper
+venv\Scripts\python main.py --mode live --strategy copytrade
 ```
 
 ---

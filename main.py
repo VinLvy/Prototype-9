@@ -4,6 +4,8 @@ import logging
 import sys
 from typing import Optional
 
+import config.settings as settings
+
 # Setup standard logging format outside the dashboard
 logging.basicConfig(
     level=logging.INFO,
@@ -16,11 +18,13 @@ try:
         PriceMonitor,
         ArbitrageDetector,
         BoneReaperDetector,
+        MicroBoneReaperDetector,
         ExecutionEngine,
         RiskManager,
         DataLogger,
         Dashboard
     )
+    from core.copy_trade_watcher import CopyTradeWatcher
 except ImportError as e:
     logging.critical(f"Failed to import core modules: {e}")
     sys.exit(1)
@@ -36,13 +40,20 @@ async def main_loop(args: argparse.Namespace):
     dashboard = Dashboard()
     dashboard.set_mode(args.mode)
     
-    db_file = "./data/bonereaper_trades.db" if args.strategy == "bonereaper" else "./data/trades.db"
+    if args.strategy == "microbonereaper":
+        db_file = "./data/microbonereaper_trades.db"
+    elif args.strategy == "bonereaper":
+        db_file = "./data/bonereaper_trades.db"
+    elif args.strategy == "copytrade":
+        db_file = "./data/copytrade_trades.db"
+    else:
+        db_file = "./data/trades.db"
     data_logger = DataLogger(db_path=db_file)
     
     risk_manager = RiskManager(
         max_position_usd=args.max_pos,
-        daily_loss_limit=30.0, # Could be from settings/args
-        max_open_positions=100 # Diperlonggar untuk Paper Mode agar bisa spam eksekusi
+        daily_loss_limit=30.0,
+        max_open_positions=100
     )
     execution_engine = ExecutionEngine(
         mode=args.mode,
@@ -51,6 +62,15 @@ async def main_loop(args: argparse.Namespace):
     )
     if args.strategy == "bonereaper":
         detector = BoneReaperDetector(risk_manager=risk_manager)
+    elif args.strategy == "microbonereaper":
+        detector = MicroBoneReaperDetector(risk_manager=risk_manager)
+    elif args.strategy == "copytrade":
+        target_wallet = args.target_wallet or settings.TARGET_WALLET
+        if not target_wallet:
+            logging.critical("copytrade strategy requires --target-wallet or TARGET_WALLET in .env")
+            sys.exit(1)
+        detector = None  # Copy trade uses CopyTradeWatcher directly
+        copy_watcher = CopyTradeWatcher(target_wallet=target_wallet)
     else:
         detector = ArbitrageDetector(
             min_spread_threshold=args.min_spread,
@@ -89,7 +109,6 @@ async def main_loop(args: argparse.Namespace):
                 if hasattr(detector, 'market_states'):
                     state = detector.market_states.pop(market_id, None)
                     if state and state.get("state") == "ENTERED":
-                        # We had an open single leg that never hedged before close
                         estimated_entry_cost = state.get("entry_price", 0.0) * args.max_pos
                         dashboard.record_execution({
                             "market_id": market_id,
@@ -101,8 +120,12 @@ async def main_loop(args: argparse.Namespace):
                 price_update_queue.task_done()
                 continue
 
-            if args.strategy == "bonereaper":
+            if args.strategy in ["bonereaper", "microbonereaper"]:
                 signal = detector.calculate_signal(price_tick)
+            elif args.strategy == "copytrade":
+                # copytrade doesn't use price_update_queue for detection
+                price_update_queue.task_done()
+                continue
             else:
                 signal = detector.calculate_spread(price_tick)
                 
@@ -110,6 +133,14 @@ async def main_loop(args: argparse.Namespace):
                 dashboard.record_opportunity(signal)
                 await execution_signal_queue.put(signal)
             price_update_queue.task_done()
+
+    async def run_copy_trade():
+        """Task for copy trade: watches target wallet and queues signals."""
+        if args.strategy != "copytrade":
+            return
+        async for signal in copy_watcher.watch():
+            dashboard.record_opportunity(signal)
+            await execution_signal_queue.put(signal)
 
     async def execute_trades():
         """Task to consume execution signals and place orders."""
@@ -126,7 +157,8 @@ async def main_loop(args: argparse.Namespace):
         asyncio.create_task(run_dashboard()),
         asyncio.create_task(ingest_prices()),
         asyncio.create_task(process_arbitrage()),
-        asyncio.create_task(execute_trades())
+        asyncio.create_task(execute_trades()),
+        asyncio.create_task(run_copy_trade()),
     ]
 
     try:
@@ -144,8 +176,6 @@ def main():
     """
     Entry point parser for Prototype-9.
     """
-    import config.settings as settings
-
     parser = argparse.ArgumentParser(description="Prototype-9: Polymarket High-Frequency Arbitrage System")
     parser.add_argument(
         "--mode", 
@@ -161,9 +191,15 @@ def main():
     )
     parser.add_argument(
         "--strategy", 
-        choices=["arb", "bonereaper"], 
+        choices=["arb", "bonereaper", "microbonereaper", "copytrade"], 
         default=settings.STRATEGY, 
         help=f"Trading strategy to use (default from .env: {settings.STRATEGY})"
+    )
+    parser.add_argument(
+        "--target-wallet",
+        type=str,
+        default=None,
+        help="Target wallet address to copy trade (required for --strategy copytrade)"
     )
     parser.add_argument(
         "--max-pos", 
