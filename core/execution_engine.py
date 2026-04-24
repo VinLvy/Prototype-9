@@ -101,12 +101,13 @@ class ExecutionEngine:
         await asyncio.sleep(0.1)
 
         # 3. Order placement
-        if self.mode == "live":
-            has_liquidity = await self._check_liquidity(token_id, share_size)
-            if not has_liquidity:
-                self.logger.warning(f"Liquidity check failed: available size at best_ask < {share_size} for {token_id}")
-                return None
+        # First, check liquidity for BOTH live and paper mode to make stats realistic
+        has_liquidity = await self._check_liquidity(token_id, share_size)
+        if not has_liquidity:
+            self.logger.warning(f"Liquidity check failed: available size at best_ask < {share_size} for {token_id}")
+            return None
 
+        if self.mode == "live":
             try:
                 order_args = OrderArgs(
                     price=execution_price,
@@ -124,7 +125,7 @@ class ExecutionEngine:
                 return None
 
         elif self.mode == "paper":
-            pass # Selalu sukses di paper mode agar status state machine tetap tersinkron
+            pass # Simulate success if liquidity was available
         else:
             self.logger.error(f"Unknown mode '{self.mode}'")
             return None
