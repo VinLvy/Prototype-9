@@ -95,6 +95,12 @@ class BoneReaperDetector:
             spread = 1.00 - combined_cost
             estimated_profit = spread - self.GAS_FACTOR  # likely negative = loss
 
+            if state["entry_price"] <= 0:
+                self.logger.error(
+                    f"[{market_id}] CUT_LOSS aborted: entry_price={state['entry_price']} is invalid."
+                )
+                return None  # Do not emit a broken signal
+
             self.logger.warning(
                 f"[{market_id}] CUT_LOSS: {time_to_close_seconds:.0f}s left. "
                 f"Combined={combined_cost:.3f}, spread={spread:.3f}"
