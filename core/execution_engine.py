@@ -160,6 +160,11 @@ class ExecutionEngine:
                         position_size * signal.get("estimated_profit_per_share", -0.005), 4
                     )
 
+            elif reason == "COPY_ENTRY":
+                # Copy trade leg: position open, P&L unknown until market resolves
+                status = "FILLED"
+                estimated_profit = 0.0
+
             else:
                 # ENTRY leg: position open, unrealized
                 status = "FILLED"
