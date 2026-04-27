@@ -18,7 +18,6 @@ try:
         PriceMonitor,
         ArbitrageDetector,
         BoneReaperDetector,
-        MicroBoneReaperDetector,
         ExecutionEngine,
         RiskManager,
         DataLogger,
@@ -40,9 +39,7 @@ async def main_loop(args: argparse.Namespace):
     dashboard = Dashboard()
     dashboard.set_mode(args.mode)
     
-    if args.strategy == "microbonereaper":
-        db_file = "./data/microbonereaper_trades.db"
-    elif args.strategy == "bonereaper":
+    if args.strategy == "bonereaper":
         db_file = "./data/bonereaper_trades.db"
     elif args.strategy == "copytrade":
         db_file = "./data/copytrade_trades.db"
@@ -62,8 +59,6 @@ async def main_loop(args: argparse.Namespace):
     )
     if args.strategy == "bonereaper":
         detector = BoneReaperDetector(risk_manager=risk_manager)
-    elif args.strategy == "microbonereaper":
-        detector = MicroBoneReaperDetector(risk_manager=risk_manager)
     elif args.strategy == "copytrade":
         target_wallet = args.target_wallet or settings.TARGET_WALLET
         if not target_wallet:
@@ -120,7 +115,7 @@ async def main_loop(args: argparse.Namespace):
                 price_update_queue.task_done()
                 continue
 
-            if args.strategy in ["bonereaper", "microbonereaper"]:
+            if args.strategy == "bonereaper":
                 signal = detector.calculate_signal(price_tick)
             elif args.strategy == "copytrade":
                 # copytrade doesn't use price_update_queue for detection
@@ -191,7 +186,7 @@ def main():
     )
     parser.add_argument(
         "--strategy", 
-        choices=["arb", "bonereaper", "microbonereaper", "copytrade"], 
+        choices=["arb", "bonereaper", "copytrade"], 
         default=settings.STRATEGY, 
         help=f"Trading strategy to use (default from .env: {settings.STRATEGY})"
     )

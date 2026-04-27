@@ -219,7 +219,7 @@ python main.py --mode paper --market BTC-UP-DOWN-15M
 | Flag | Default | Deskripsi |
 |---|---|---|
 | `--mode` | `paper` | Mode trading: `paper` atau `live` |
-| `--strategy` | `arb` | Strategi: `arb`, `bonereaper`, `microbonereaper`, `copytrade` |
+| `--strategy` | `arb` | Strategi: `arb`, `bonereaper`, `copytrade` |
 | `--min-spread` | `0.020` | Threshold spread minimum |
 | `--max-pos` | `50.0` | Ukuran posisi maks per trade (USD) |
 | `--log-level` | `INFO` | Verbositas log: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
@@ -480,11 +480,10 @@ Di minggu pertama live:
 ```
 main.py
   │
-  ├── [arb / bonereaper / microbonereaper]
+  ├── [arb / bonereaper]
   │   ├── core/price_monitor.py       → WebSocket: stream harga YES/NO real-time
   │   ├── core/arb_detector.py        → Hitung spread untuk strategi arb
-  │   ├── core/bonereaper_detector.py → Dual-entry logic untuk BoneReaper
-  │   └── core/micro_bonereaper.py    → BoneReaper + BankrollGuard ($12 cap)
+  │   └── core/bonereaper_detector.py → Dual-entry logic untuk BoneReaper
   │
   ├── [copytrade]
   │   └── core/copy_trade_watcher.py  → Poll Data API tiap 1.5s, filter BUY 5m market
@@ -636,9 +635,6 @@ Selesaikan **semua item** sebelum switch ke live mode:
 ```bash
 # Paper mode — BoneReaper (algorithmic dual-entry)
 venv\Scripts\python main.py --mode paper --strategy bonereaper
-
-# Paper mode — MicroBoneReaper ($1/trade, bankroll $12)
-venv\Scripts\python main.py --mode paper --strategy microbonereaper
 
 # Paper mode — Copy Trade (monitor wallet target)
 venv\Scripts\python main.py --mode paper --strategy copytrade
