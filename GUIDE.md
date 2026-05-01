@@ -1,49 +1,49 @@
 # Prototype-9 — Operational Guide
 
-> Panduan lengkap mulai dari setup environment hingga menjalankan bot secara paper & live.
+> Complete guide from environment setup to running the bot in paper & live mode.
 
 ---
 
-## Daftar Isi
+## Table of Contents
 
-1. [Prasyarat](#1-prasyarat)
-2. [Instalasi](#2-instalasi)
-3. [Konfigurasi Environment](#3-konfigurasi-environment)
-4. [Menjalankan dalam Paper Mode](#4-menjalankan-dalam-paper-mode)
-5. [Memahami Dashboard TUI](#5-memahami-dashboard-tui)
-6. [Menjalankan Tests](#6-menjalankan-tests)
-7. [Melihat Laporan Performa](#7-melihat-laporan-performa)
-8. [Menjalankan dalam Live Mode](#8-menjalankan-dalam-live-mode)
-9. [Penjelasan Komponen Inti](#9-penjelasan-komponen-inti)
+1. [Prerequisites](#1-prerequisites)
+2. [Installation](#2-installation)
+3. [Environment Configuration](#3-environment-configuration)
+4. [Running in Paper Mode](#4-running-in-paper-mode)
+5. [Understanding the TUI Dashboard](#5-understanding-the-tui-dashboard)
+6. [Running Tests](#6-running-tests)
+7. [Viewing Performance Reports](#7-viewing-performance-reports)
+8. [Running in Live Mode](#8-running-in-live-mode)
+9. [Core Components Explanation](#9-core-components-explanation)
 10. [Troubleshooting](#10-troubleshooting)
 11. [Pre-Live Checklist](#11-pre-live-checklist)
 
 ---
 
-## 1. Prasyarat
+## 1. Prerequisites
 
-Pastikan semua tools berikut sudah terinstall sebelum mulai:
+Ensure all the following tools are installed before starting:
 
-| Tool | Versi Minimum | Cek Versi |
+| Tool | Minimum Version | Check Version |
 |---|---|---|
 | Python | 3.12+ | `python --version` |
-| pip | terbaru | `pip --version` |
+| pip | latest | `pip --version` |
 | Git | any | `git --version` |
 
-> **Windows:** Gunakan **PowerShell** atau **Command Prompt** sebagai Administrator untuk menghindari permission error saat membuat virtual environment.
+> **Windows:** Use **PowerShell** or **Command Prompt** as Administrator to avoid permission errors when creating the virtual environment.
 
 ---
 
-## 2. Instalasi
+## 2. Installation
 
-### Langkah 1 — Clone repository
+### Step 1 — Clone the repository
 
 ```bash
 git clone https://github.com/yourname/prototype-9.git
 cd prototype-9
 ```
 
-### Langkah 2 — Buat virtual environment
+### Step 2 — Create a virtual environment
 
 **Windows (PowerShell):**
 ```powershell
@@ -63,28 +63,28 @@ python3 -m venv venv
 source venv/bin/activate
 ```
 
-Setelah aktif, prompt terminal akan menampilkan `(venv)` di awal baris.
+Once active, the terminal prompt will show `(venv)` at the beginning of the line.
 
-### Langkah 3 — Install dependencies
+### Step 3 — Install dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Proses ini menginstall semua library yang dibutuhkan:
+This process installs all required libraries:
 
-| Package | Fungsi |
+| Package | Function |
 |---|---|
 | `py-clob-client` | Polymarket CLOB API client |
-| `web3` | Interaksi dengan Polygon blockchain |
-| `aiohttp` + `websockets` | Streaming harga real-time |
-| `pandas` | Analitik data trading |
-| `python-dotenv` | Load konfigurasi dari `.env` |
-| `rich` | Terminal dashboard TUI |
-| `SQLAlchemy` | ORM database (upgrade dari sqlite3) |
-| `pytest` | Framework testing |
+| `web3` | Interaction with Polygon blockchain |
+| `aiohttp` + `websockets` | Real-time price streaming |
+| `pandas` | Trading data analytics |
+| `python-dotenv` | Load configurations from `.env` |
+| `rich` | Terminal TUI dashboard |
+| `SQLAlchemy` | Database ORM (upgrade from sqlite3) |
+| `pytest` | Testing framework |
 
-### Langkah 4 — Buat direktori data
+### Step 4 — Create data directory
 
 ```bash
 # Windows
@@ -94,13 +94,13 @@ mkdir data
 mkdir -p data
 ```
 
-> Direktori `data/` akan menyimpan `trades.db` — database SQLite untuk semua riwayat transaksi.
+> The `data/` directory will store `trades.db` — the SQLite database for all transaction history.
 
 ---
 
-## 3. Konfigurasi Environment
+## 3. Environment Configuration
 
-### Langkah 1 — Salin file contoh
+### Step 1 — Copy the example file
 
 ```bash
 # Windows
@@ -110,9 +110,9 @@ copy .env.example .env
 cp .env.example .env
 ```
 
-### Langkah 2 — Edit file `.env`
+### Step 2 — Edit the .env file
 
-Buka `.env` dengan text editor favorit dan isi sesuai kebutuhan:
+Open `.env` with your favorite text editor and fill it out as needed:
 
 ```env
 # ── Polymarket CLOB API ─────────────────────────────
@@ -120,119 +120,119 @@ POLY_API_KEY=your_api_key_here
 POLY_API_SECRET=your_api_secret_here
 POLY_PASSPHRASE=your_passphrase_here
 
-# ── Wallet Polygon ──────────────────────────────────
+# ── Polygon Wallet ──────────────────────────────────
 WALLET_PRIVATE_KEY=your_private_key_here
 WALLET_ADDRESS=0xYourWalletAddress
 
-# ── Parameter Trading ───────────────────────────────
-MIN_SPREAD=0.020          # Spread minimum 2.0% agar trade terpicu
-MAX_POSITION_USD=50       # Ukuran posisi maksimal per trade ($)
-DAILY_LOSS_LIMIT=30       # Bot berhenti otomatis jika rugi > $30/hari
-MAX_OPEN_POSITIONS=3      # Maksimal posisi terbuka bersamaan
+# ── Trading Parameters ──────────────────────────────
+MIN_SPREAD=0.020          # Minimum spread 2.0% to trigger trade
+MAX_POSITION_USD=50       # Max position size per trade ($)
+DAILY_LOSS_LIMIT=30       # Auto-halt bot if daily loss > $30
+MAX_OPEN_POSITIONS=3      # Max simultaneous open positions
 
 # ── BoneReaper Strategy ─────────────────────────────
 STRATEGY=bonereaper           # arb | bonereaper
-ENTRY_PRICE_THRESHOLD=0.42    # Tingkat implied prob maskimal untuk entry
-HEDGE_TRIGGER_SECONDS=45      # Batas waktu hold sebelum paksa cari posisi hedge
-MAX_COMBINED_COST=0.96        # Maks price gabungan YES+NO (spread 4%)
+ENTRY_PRICE_THRESHOLD=0.42    # Maximum implied prob threshold for entry
+HEDGE_TRIGGER_SECONDS=45      # Hold time limit before forcing hedge position
+MAX_COMBINED_COST=0.96        # Maximum combined price for YES+NO (4% spread)
 
 # ── Mode ─────────────────────────────────────────────
-TRADING_MODE=paper        # Gunakan 'paper' dulu, 'live' hanya saat siap
+TRADING_MODE=paper        # Use 'paper' first, 'live' only when ready
 
-# ── Gas Polygon ──────────────────────────────────────
+# ── Polygon Gas ──────────────────────────────────────
 MAX_GAS_GWEI=100
-GAS_PRICE_BUFFER=1.2      # Buffer keamanan estimasi gas
+GAS_PRICE_BUFFER=1.2      # Safety buffer for gas estimation
 
 # ── Logging & Database ───────────────────────────────
 LOG_LEVEL=INFO
 DB_PATH=./data/trades.db
 ```
 
-> **⚠️ PENTING:** Jangan pernah commit file `.env` ke Git. File ini sudah terdaftar di `.gitignore`.
+> **⚠️ IMPORTANT:** Never commit the `.env` file to Git. This file is already registered in `.gitignore`.
 
-### Penjelasan Parameter Kritis
+### Critical Parameters Explanation
 
-| Parameter | Deskripsi | Rekomendasi Awal |
+| Parameter | Description | Initial Recommendation |
 |---|---|---|
-| `MIN_SPREAD` | Spread minimum yang diperlukan agar arb dianggap valid (setelah gas) | `0.020` (2%) |
-| `MAX_POSITION_USD` | Batas keras ukuran posisi per trade | `$25–50` |
-| `DAILY_LOSS_LIMIT` | Circuit breaker harian — bot auto-halt | Maks 5% modal |
-| `MAX_OPEN_POSITIONS` | Batas eksposur simultan | `2–3` |
-| `STRATEGY` | Strategi trading bot (`arb` atau `bonereaper`) | `bonereaper` |
-| `ENTRY_PRICE_THRESHOLD` | Threshold entry khusus `bonereaper` pada harga murah | `0.42` |
-| `HEDGE_TRIGGER_SECONDS` | Cut-loss timer khusus `bonereaper` | `45` |
-| `MAX_COMBINED_COST` | Maximum net price untuk hedge di `bonereaper` | `0.96` |
+| `MIN_SPREAD` | Minimum spread required for an arb to be considered valid (after gas) | `0.020` (2%) |
+| `MAX_POSITION_USD` | Hard limit for maximum position size per trade | `$25–50` |
+| `DAILY_LOSS_LIMIT` | Daily circuit breaker — auto-halt bot | Max 5% of capital |
+| `MAX_OPEN_POSITIONS` | Maximum simultaneous open positions | `2–3` |
+| `STRATEGY` | Bot trading strategy (`arb` or `bonereaper`) | `bonereaper` |
+| `ENTRY_PRICE_THRESHOLD` | Entry threshold specifically for `bonereaper` on cheap prices | `0.42` |
+| `HEDGE_TRIGGER_SECONDS` | Cut-loss timer specifically for `bonereaper` | `45` |
+| `MAX_COMBINED_COST` | Maximum net price for hedge in `bonereaper` | `0.96` |
 
 ---
 
-## 4. Menjalankan dalam Paper Mode
+## 4. Running in Paper Mode
 
-Paper mode adalah **mode wajib sebelum live**. Semua logika deteksi, sizing, dan logging berjalan penuh — hanya eksekusi order ke blockchain yang di-skip.
+Paper mode is **mandatory before going live**. All detection, sizing, and logging logic runs fully — only order execution to the blockchain is skipped.
 
-### Run dasar
+### Basic Run
 
-Masuk ke venv terlebih dahulu
+Activate the venv first
 ```bash
 venv\Scripts\python main.py --mode paper
 ```
 
-### Melihat History Eksekusi Trade (Database)
-Semua order log yang sukses akan tercatat di `/data/trades.db`. 
-Gunakan script pembaca berikut untuk menampilkannya ke terminal:
+### Viewing Trade Execution History (Database)
+All successful order logs will be recorded in `/data/trades.db`. 
+Use the following reader script to display them in the terminal:
 ```bash
 venv\Scripts\python utils/view_trades.py
 ```
 
-### Script Dukungan (Market Discovery)
+### Support Script (Market Discovery)
 
-Membantu mencari market aktif yang bisa dipasangkan dengan bot.
+Helps find active markets that can be paired with the bot.
 ```bash
-# Pantau current active window timeframe 5m
+# Monitor current active window timeframe 5m
 python utils/market_discovery.py --timeframe 5m
 
-# Auto-refresh tiap 30s (cocok dibiarkan di terminal terpisah)
+# Auto-refresh every 30s (suitable to be left running in a separate terminal)
 python utils/market_discovery.py --timeframe 5m --watch
 
-# Lihat semua short-window market lintas timeframe
+# View all short-window markets across timeframes
 python utils/market_discovery.py --timeframe all --limit 50
 ```
 
-### Dengan parameter tambahan
+### With additional parameters
 
 ```bash
-# Spread minimum lebih ketat (2.5%)
+# Tighter minimum spread (2.5%)
 python main.py --mode paper --min-spread 0.025
 
-# Batasi ukuran posisi ke $20
+# Limit position size to $20
 python main.py --mode paper --max-pos 20
 
-# Log lebih detail untuk debugging
+# More detailed logs for debugging
 python main.py --mode paper --log-level DEBUG
 
-# Fokus ke market tertentu saja
+# Focus only on a specific market
 python main.py --mode paper --market BTC-UP-DOWN-15M
 ```
 
-### Referensi semua flag CLI
+### CLI flags reference
 
-| Flag | Default | Deskripsi |
+| Flag | Default | Description |
 |---|---|---|
-| `--mode` | `paper` | Mode trading: `paper` atau `live` |
-| `--strategy` | `arb` | Strategi: `arb`, `bonereaper` |
-| `--min-spread` | `0.020` | Threshold spread minimum |
-| `--max-pos` | `50.0` | Ukuran posisi maks per trade (USD) |
-| `--log-level` | `INFO` | Verbositas log: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
-| `--market` | semua | Fokus ke satu market spesifik |
+| `--mode` | `paper` | Trading mode: `paper` or `live` |
+| `--strategy` | `arb` | Strategy: `arb`, `bonereaper` |
+| `--min-spread` | `0.020` | Minimum spread threshold |
+| `--max-pos` | `50.0` | Max position size per trade (USD) |
+| `--log-level` | `INFO` | Log verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `--market` | all | Focus on one specific market |
 
-### Menghentikan bot
+### Stopping the bot
 
-Tekan `Ctrl + C` untuk shutdown bersih. Bot akan menutup koneksi database dan task async sebelum exit.
+Press `Ctrl + C` for a clean shutdown. The bot will close database connections and async tasks before exiting.
 
 ---
 
-## 5. Memahami Dashboard TUI
+## 5. Understanding the TUI Dashboard
 
-Saat bot berjalan, terminal akan menampilkan dashboard real-time:
+While the bot is running, the terminal will display a real-time dashboard:
 
 ```
 ╔═ PROTOTYPE-9 ════════════════════════════ PAPER MODE ═╗
@@ -254,33 +254,33 @@ Saat bot berjalan, terminal akan menampilkan dashboard real-time:
   [Q] Quit   [P] Pause   [K] Kill all positions
 ```
 
-### Penjelasan setiap panel
+### Explanation of each panel
 
-**Panel Atas — Statistik Harian:**
-- **P&L Today** — Total profit/loss hari ini (hijau = profit, merah = loss)
-- **Win Rate** — Persentase trade yang menguntungkan
-- **Open Opps** — Jumlah peluang arb aktif saat ini
-- **Bankroll** — Saldo modal yang sedang dilacak bot
+**Top Panel — Daily Statistics:**
+- **P&L Today** — Total profit/loss for today (green = profit, red = loss)
+- **Win Rate** — Percentage of profitable trades
+- **Open Opps** — Number of currently active arb opportunities
+- **Bankroll** — Bankroll balance currently tracked by the bot
 
-**Panel Tengah — Live Opportunities:**
-- Market dengan peluang arb yang terdeteksi, diurutkan terbaru di atas
-- Hanya menampilkan opps yang melewati threshold `MIN_SPREAD`
+**Middle Panel — Live Opportunities:**
+- Markets with detected arb opportunities, sorted newest at the top
+- Only displays opps that pass the `MIN_SPREAD` threshold
 
-**Panel Bawah — Execution Log:**
-- Riwayat 10 trade terakhir dengan timestamp, status, spread, dan P&L
-- **WIN** = trade profitable, **LOSS** = trade rugi
+**Bottom Panel — Execution Log:**
+- History of the last 10 trades with timestamp, status, spread, and P&L
+- **WIN** = profitable trade, **LOSS** = losing trade
 
 ---
 
-## 6. Menjalankan Tests
+## 6. Running Tests
 
-Jalankan semua test sekaligus:
+Run all tests at once:
 
 ```bash
 pytest tests/ -v
 ```
 
-Jalankan test per modul:
+Run tests per module:
 
 ```bash
 # Test ArbitrageDetector
@@ -293,14 +293,14 @@ pytest tests/test_risk_manager.py -v
 pytest tests/test_kelly.py -v
 ```
 
-Jalankan dengan laporan coverage:
+Run with coverage report:
 
 ```bash
 pip install pytest-cov
 pytest tests/ --cov=core --cov=utils --cov-report=term-missing
 ```
 
-### Hasil yang diharapkan
+### Expected results
 
 ```
 tests/test_detector.py::TestCalculateSpread::test_valid_opportunity_detected    PASSED
@@ -311,32 +311,32 @@ tests/test_kelly.py::TestKellyCompute::test_positive_edge_returns_nonzero_size  
 ========================= 28 passed in 0.42s =========================
 ```
 
-> Semua 28 test harus hijau sebelum melanjutkan ke live mode.
+> All 28 tests must be green before proceeding to live mode.
 
 ---
 
-## 7. Melihat Laporan Performa
+## 7. Viewing Performance Reports
 
-Setelah bot berjalan dan mengumpulkan data di `data/trades.db`:
+After the bot runs and collects data in `data/trades.db`:
 
 ```bash
-# Laporan 7 hari terakhir (default)
+# Report for the last 7 days (default)
 python utils/report.py --period 7d
 
-# Laporan 30 hari
+# Report for 30 days
 python utils/report.py --period 30d
 
-# Laporan semua waktu
+# All-time report
 python utils/report.py --period all
 
-# Export ke CSV
+# Export to CSV
 python utils/report.py --period 30d --export hasil_trading.csv
 
-# Gunakan database di path custom
+# Use database in a custom path
 python utils/report.py --period 7d --db ./data/custom_trades.db
 ```
 
-### Contoh output laporan
+### Example report output
 
 ```
                 Prototype-9 Performance Report — 7D
@@ -358,60 +358,60 @@ python utils/report.py --period 7d --db ./data/custom_trades.db
 
 ---
 
-## 8. Menjalankan dalam Live Mode
+## 8. Running in Live Mode
 
-> **⚠️ PERINGATAN:** Hanya lakukan ini setelah menyelesaikan semua item di [Pre-Live Checklist](#11-pre-live-checklist).
+> **⚠️ WARNING:** Only do this after completing all items in the [Pre-Live Checklist](#11-pre-live-checklist).
 
-### Langkah 1 — Update `.env`
+### Step 1 — Update .env
 
 ```env
 TRADING_MODE=live
-MAX_POSITION_USD=10    # Mulai kecil, maks $10/trade untuk minggu pertama
-DAILY_LOSS_LIMIT=15    # Ketat di awal
-MAX_OPEN_POSITIONS=2   # Batasi eksposur
+MAX_POSITION_USD=10    # Start small, max $10/trade for the first week
+DAILY_LOSS_LIMIT=15    # Strict at the beginning
+MAX_OPEN_POSITIONS=2   # Limit exposure
 ```
 
-### Langkah 2 — Validasi konfigurasi
+### Step 2 — Validate configuration
 
 ```bash
 python -c "from config.settings import validate; validate()"
 ```
 
-Jika output `Settings validation passed for LIVE mode.` → siap lanjut.
+If the output is `Settings validation passed for LIVE mode.` → ready to proceed.
 
-### Langkah 3 — Jalankan live mode
+### Step 3 — Run live mode
 
 ```bash
 python main.py --mode live
 ```
 
-### Langkah 4 — Monitor ketat
+### Step 4 — Monitor strictly
 
-Di minggu pertama live:
-- Pantau dashboard setiap 30 menit
-- Periksa laporan harian: `python utils/report.py --period 1d`
-- Siapkan jari di `Ctrl+C` jika ada anomali
+During the first week of live:
+- Monitor the dashboard every 30 minutes
+- Check daily reports: `python utils/report.py --period 1d`
+- Keep your fingers on `Ctrl+C` in case of anomalies
 
 ---
 
-## 9. Penjelasan Komponen Inti
+## 9. Core Components Explanation
 
 ```
 main.py
   │
   ├── [arb / bonereaper]
-  │   ├── core/price_monitor.py       → WebSocket: stream harga YES/NO real-time
-  │   ├── core/arb_detector.py        → Hitung spread untuk strategi arb
-  │   └── core/bonereaper_detector.py → Dual-entry logic untuk BoneReaper
+  │   ├── core/price_monitor.py       → WebSocket: stream YES/NO prices in real-time
+  │   ├── core/arb_detector.py        → Calculate spread for arb strategy
+  │   └── core/bonereaper_detector.py → Dual-entry logic for BoneReaper
   │
-  ├── core/bankroll_guard.py      → Tracker deployed/available capital
-  ├── core/execution_engine.py    → Paper: log saja | Live: POST order ke CLOB
-  ├── core/risk_manager.py        → Gate keeper: posisi maks? loss limit? Kelly size?
-  ├── core/data_logger.py         → Simpan hasil trade ke SQLite
-  └── core/dashboard.py           → Tampilkan TUI real-time di terminal
+  ├── core/bankroll_guard.py      → Tracker for deployed/available capital
+  ├── core/execution_engine.py    → Paper: log only | Live: POST orders to CLOB
+  ├── core/risk_manager.py        → Gatekeeper: max position? loss limit? Kelly size?
+  ├── core/data_logger.py         → Save trade results to SQLite
+  └── core/dashboard.py           → Display real-time TUI in the terminal
 ```
 
-### Alur sinyal (detail)
+### Signal flow (detail)
 
 ```
 PriceMonitor            ArbitrageDetector        ExecutionEngine
@@ -425,21 +425,21 @@ PriceMonitor            ArbitrageDetector        ExecutionEngine
      │                        │                        │── Dashboard.record_execution()
 ```
 
-### File konfigurasi
+### Configuration files
 
-| File | Fungsi |
+| File | Function |
 |---|---|
-| `.env` | Credentials & parameter (jangan di-commit!) |
-| `config/settings.py` | Loader dari `.env` — semua modul import dari sini |
+| `.env` | Credentials & parameters (do not commit!) |
+| `config/settings.py` | Loader from `.env` — all modules import from here |
 
-### File utility
+### Utility files
 
-| File | Fungsi |
+| File | Function |
 |---|---|
-| `utils/kelly.py` | Hitung ukuran posisi optimal (Half-Kelly) |
-| `utils/gas.py` | Estimasi biaya gas Polygon dalam USD |
-| `utils/helpers.py` | Format angka, timestamp, validasi |
-| `utils/report.py` | CLI tool laporan performa |
+| `utils/kelly.py` | Calculate optimal position size (Half-Kelly) |
+| `utils/gas.py` | Polygon gas cost estimation in USD |
+| `utils/helpers.py` | Number formatting, timestamps, validation |
+| `utils/report.py` | CLI tool for performance reports |
 
 ---
 
@@ -447,121 +447,121 @@ PriceMonitor            ArbitrageDetector        ExecutionEngine
 
 ### `ModuleNotFoundError: No module named 'rich'`
 
-Virtual environment belum aktif atau dependencies belum terinstall.
+Virtual environment is not active or dependencies are not installed.
 
 ```bash
-# Aktifkan venv dulu
+# Activate venv first
 venv\Scripts\Activate.ps1   # Windows
 source venv/bin/activate     # macOS/Linux
 
-# Install ulang
+# Reinstall
 pip install -r requirements.txt
 ```
 
 ### `EnvironmentError: Live mode requires these env vars to be set`
 
-File `.env` belum diisi lengkap untuk live mode. Periksa:
+The `.env` file is not fully configured for live mode. Check:
 
 ```bash
 python -c "from config.settings import validate; validate()"
 ```
 
-Isi env var yang masih kosong.
+Fill in any empty environment variables.
 
-### Bot berjalan tapi tidak ada trade yang terpicu
+### Bot is running but no trades are triggered
 
-1. Spread pasar sedang terlalu kecil — ini normal. Coba turunkan sementara:
+1. Market spread is too small — this is normal. Try lowering it temporarily:
    ```bash
    python main.py --mode paper --min-spread 0.010
    ```
-2. Pastikan koneksi internet stabil (WebSocket putus = tidak ada data).
-3. Cek log dengan `--log-level DEBUG` untuk detail.
+2. Ensure a stable internet connection (WebSocket disconnected = no data).
+3. Check logs with `--log-level DEBUG` for details.
 
-### Dashboard tidak muncul / tampilan rusak
+### Dashboard does not appear / display is broken
 
-Terminal tidak mendukung warna ANSI. Gunakan:
-- Windows: **Windows Terminal** (bukan CMD lama)
-- macOS/Linux: Terminal standar sudah mendukung
+Terminal does not support ANSI colors. Use:
+- Windows: **Windows Terminal** (not the legacy CMD)
+- macOS/Linux: Standard terminals already support it
 
 ```bash
-# Fallback: jalankan tanpa TUI, output ke log file
+# Fallback: run without TUI, output to log file
 python main.py --mode paper --log-level INFO 2>&1 | tee run.log
 ```
 
 ### Database error: `unable to open database file`
 
-Direktori `data/` belum ada:
+The `data/` directory does not exist:
 
 ```bash
 mkdir data
 ```
 
-### `pytest` tidak menemukan modul
+### `pytest` does not find module
 
-Jalankan dari root direktori project (bukan dari dalam `tests/`):
+Run from the project root directory (not from inside `tests/`):
 
 ```bash
-# Benar
+# Correct
 cd prototype-9
 pytest tests/ -v
 
-# Salah — jangan masuk ke folder tests
-cd tests && pytest  # ini akan gagal
+# Wrong — do not enter the tests folder
+cd tests && pytest  # this will fail
 ```
 
 ---
 
 ## 11. Pre-Live Checklist
 
-Selesaikan **semua item** sebelum switch ke live mode:
+Complete **all items** before switching to live mode:
 
 ### Paper Trading Validation
 
-- [ ] Minimum **50 paper trades** selesai
-- [ ] **Win rate ≥ 65%** selama minimal 2 minggu (pantau dengan `report.py`)
-- [ ] Average net profit per trade **positif** setelah biaya gas simulasi
-- [ ] Tidak ada unhandled exception di log selama 48 jam berjalan terus
-- [ ] Circuit breaker harian sudah diuji: set `DAILY_LOSS_LIMIT=0.01`, verifikasi bot berhenti
+- [ ] Minimum **50 paper trades** completed
+- [ ] **Win rate ≥ 65%** for at least 2 weeks (monitor with `report.py`)
+- [ ] Average net profit per trade is **positive** after simulated gas costs
+- [ ] No unhandled exceptions in logs during 48 hours of continuous running
+- [ ] Daily circuit breaker tested: set `DAILY_LOSS_LIMIT=0.01`, verify the bot halts
 
 ### Wallet & API
 
-- [ ] Wallet Polygon diisi USDC (mulai dari $100–200)
-- [ ] Polymarket API keys ditest berhasil via panggilan GET market
-- [ ] Gas estimator dikalibrasi — bandingkan estimasi bot vs [PolygonScan](https://polygonscan.com)
-- [ ] File `.env` tidak mengandung test keys di konfigurasi production
+- [ ] Polygon Wallet funded with USDC (starting from $100–200)
+- [ ] Polymarket API keys successfully tested via GET market calls
+- [ ] Gas estimator calibrated — compare bot's estimation vs [PolygonScan](https://polygonscan.com)
+- [ ] `.env` file does not contain test keys in production configuration
 
 ### System Stability
 
-- [ ] Bot berjalan **48 jam non-stop** tanpa crash di paper mode
-- [ ] Auto-reconnect WebSocket diuji (putuskan koneksi, konfirmasi recovery)
-- [ ] Laptop sleep/hibernate **dinonaktifkan** selama jam trading
-- [ ] Kill switch `Ctrl+C` diuji — konfirmasi database terkunci dengan benar
+- [ ] Bot runs for **48 hours non-stop** without crashing in paper mode
+- [ ] WebSocket auto-reconnect tested (disconnect network, confirm recovery)
+- [ ] Laptop sleep/hibernation **disabled** during trading hours
+- [ ] Kill switch `Ctrl+C` tested — confirm database locks correctly
 
-### Risk Parameters (Minggu Pertama Live)
+### Risk Parameters (First Week Live)
 
-- [ ] `MAX_POSITION_USD=10` (maks $10 per trade)
-- [ ] `DAILY_LOSS_LIMIT` ≤ 5% dari total modal
+- [ ] `MAX_POSITION_USD=10` (max $10 per trade)
+- [ ] `DAILY_LOSS_LIMIT` ≤ 5% of total capital
 - [ ] `MAX_OPEN_POSITIONS=2`
-- [ ] Review setiap hari selama 7 hari pertama sebelum naikkan limits
+- [ ] Review daily for the first 7 days before raising limits
 
 ---
 
-## Referensi Cepat
+## Quick Reference
 
 ```bash
 # Paper mode — BoneReaper (algorithmic dual-entry)
 venv\Scripts\python main.py --mode paper --strategy bonereaper
 
-# Cek semua test
+# Run all tests
 pytest tests/ -v
 
-# Laporan performa bonereaper
+# BoneReaper performance report
 venv\Scripts\python utils/report.py --period 7d --db ./data/bonereaper_trades.db
 
-# Validasi settings untuk live
+# Validate settings for live
 python -c "from config.settings import validate; validate()"
 
-# Jalankan live mode
+# Run live mode
 venv\Scripts\python main.py --mode live --strategy bonereaper
 ```
 
