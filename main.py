@@ -23,7 +23,6 @@ try:
         DataLogger,
         Dashboard
     )
-    from core.copy_trade_watcher import CopyTradeWatcher
 except ImportError as e:
     logging.critical(f"Failed to import core modules: {e}")
     sys.exit(1)
@@ -41,8 +40,6 @@ async def main_loop(args: argparse.Namespace):
     
     if args.strategy == "bonereaper":
         db_file = "./data/bonereaper_trades.db"
-    elif args.strategy == "copytrade":
-        db_file = "./data/copytrade_trades.db"
     else:
         db_file = "./data/trades.db"
     data_logger = DataLogger(db_path=db_file)
@@ -59,13 +56,6 @@ async def main_loop(args: argparse.Namespace):
     )
     if args.strategy == "bonereaper":
         detector = BoneReaperDetector(risk_manager=risk_manager)
-    elif args.strategy == "copytrade":
-        target_wallet = args.target_wallet or settings.TARGET_WALLET
-        if not target_wallet:
-            logging.critical("copytrade strategy requires --target-wallet or TARGET_WALLET in .env")
-            sys.exit(1)
-        detector = None  # Copy trade uses CopyTradeWatcher directly
-        copy_watcher = CopyTradeWatcher(target_wallet=target_wallet)
     else:
         detector = ArbitrageDetector(
             min_spread_threshold=args.min_spread,
@@ -117,10 +107,6 @@ async def main_loop(args: argparse.Namespace):
 
             if args.strategy == "bonereaper":
                 signal = detector.calculate_signal(price_tick)
-            elif args.strategy == "copytrade":
-                # copytrade doesn't use price_update_queue for detection
-                price_update_queue.task_done()
-                continue
             else:
                 signal = detector.calculate_spread(price_tick)
                 
@@ -128,14 +114,6 @@ async def main_loop(args: argparse.Namespace):
                 dashboard.record_opportunity(signal)
                 await execution_signal_queue.put(signal)
             price_update_queue.task_done()
-
-    async def run_copy_trade():
-        """Task for copy trade: watches target wallet and queues signals."""
-        if args.strategy != "copytrade":
-            return
-        async for signal in copy_watcher.watch():
-            dashboard.record_opportunity(signal)
-            await execution_signal_queue.put(signal)
 
     async def execute_trades():
         """Task to consume execution signals and place orders."""
@@ -153,7 +131,6 @@ async def main_loop(args: argparse.Namespace):
         asyncio.create_task(ingest_prices()),
         asyncio.create_task(process_arbitrage()),
         asyncio.create_task(execute_trades()),
-        asyncio.create_task(run_copy_trade()),
     ]
 
     try:
@@ -186,15 +163,9 @@ def main():
     )
     parser.add_argument(
         "--strategy", 
-        choices=["arb", "bonereaper", "copytrade"], 
+        choices=["arb", "bonereaper"], 
         default=settings.STRATEGY, 
         help=f"Trading strategy to use (default from .env: {settings.STRATEGY})"
-    )
-    parser.add_argument(
-        "--target-wallet",
-        type=str,
-        default=None,
-        help="Target wallet address to copy trade (required for --strategy copytrade)"
     )
     parser.add_argument(
         "--max-pos", 
