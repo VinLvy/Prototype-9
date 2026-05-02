@@ -1,7 +1,5 @@
 # Prototype-9
 ### Polymarket Automated Trading & Arbitrage System
-
-
 ---
 
 ## Overview
@@ -321,15 +319,6 @@ Output includes: total P&L, win rate, avg profit/loss per trade, gas costs break
 - **API rate limits:** Polymarket CLOB throttles at high request volume. Built-in backoff handles this but reduces scan frequency under load.
 - **Market resolution risk:** Binary markets can resolve while a position is open. The 5-minute window filter reduces but does not eliminate this.
 - **Capital scale:** Below $500 deployed capital, gas costs materially reduce net returns. Scale gradually.
-
----
-
-## Roadmap
-
-- **v0.2** — Cross-market arbitrage (Polymarket vs Kalshi)
-- **v0.3** — Liquidity provision mode with hedging
-- **v0.4** — VPS deployment scripts + systemd service
-- **v1.0** — Multi-asset support (ETH, SOL prediction markets)
 
 ---
 
