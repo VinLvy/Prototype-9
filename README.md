@@ -1,13 +1,15 @@
 # Prototype-9
-### Polymarket High-Frequency Arbitrage System
+### Polymarket Automated Trading & Arbitrage System
 
-> **Status:** Alpha v0.1 — Paper trading only. Do not deploy live capital without completing all pre-live checklist items.
 
 ---
 
 ## Overview
 
-Prototype-9 is an automated arbitrage bot that exploits pricing inefficiencies in Polymarket's binary prediction markets. It targets BTC "Up or Down" short-window markets where the combined YES + NO price deviates above $1.00, locking in a near-guaranteed spread after gas fees.
+Prototype-9 is an automated trading bot designed for Polymarket's binary prediction markets. It supports two distinct operational strategies:
+
+**1. Arbitrage Strategy (`arb`)**
+Exploits pricing inefficiencies in short-window markets where the combined YES + NO price deviates above $1.00, locking in a near-guaranteed spread after gas fees.
 
 **Core mechanic:**
 ```
@@ -15,6 +17,9 @@ YES_price + NO_price > 1.00 + gas_fee + min_threshold
 → Buy both sides simultaneously
 → Collect spread at market resolution
 ```
+
+**2. BoneReaper Strategy (`bonereaper`)**
+A directional-to-hedge strategy that enters positions when implied probability is low, holds for a brief window, and attempts to hedge the opposite side if the market moves favorably to lock in a guaranteed spread before resolution.
 
 **Target performance (paper trading baseline):**
 - Win rate: ~70–80% (spread arb, not directional)
@@ -125,6 +130,12 @@ MAX_POSITION_USD=50           # Max position size per trade
 DAILY_LOSS_LIMIT=30           # Auto-halt if daily loss exceeds this ($)
 MAX_OPEN_POSITIONS=3          # Max simultaneous positions
 
+# BoneReaper Strategy Parameters
+STRATEGY=bonereaper           # arb | bonereaper 
+ENTRY_PRICE_THRESHOLD=0.35    # Implied probability threshold to enter
+HEDGE_TRIGGER_SECONDS=120     # Seconds to hold before seeking a hedge
+MAX_COMBINED_COST=0.97        # Max combined cost of YES + NO (locks 3% spread)
+
 # Mode: paper | live
 TRADING_MODE=paper
 
@@ -155,8 +166,10 @@ prototype-9/
 │   ├── __init__.py
 │   ├── price_monitor.py       # WebSocket market feed
 │   ├── arb_detector.py        # Spread detection logic
+│   ├── bonereaper_detector.py # BoneReaper strategy logic
 │   ├── execution_engine.py    # Order placement
 │   ├── risk_manager.py        # Safety controls
+│   ├── bankroll_guard.py      # Bankroll protection logic
 │   ├── data_logger.py         # SQLite trade journal
 │   └── dashboard.py           # Rich TUI interface
 │
@@ -201,6 +214,9 @@ python main.py --mode live
 ### Additional flags
 
 ```bash
+# Set the strategy to run (arb or bonereaper)
+python main.py --mode paper --strategy bonereaper
+
 # Set minimum spread threshold (overrides .env)
 python main.py --mode paper --min-spread 0.025
 
@@ -288,7 +304,7 @@ The bot will auto-halt and log a warning if any circuit breaker trips. Restart w
 
 ## Performance Analytics
 
-Trade history is stored in `data/trades.db`. To generate a performance report:
+Trade history is stored in `data/trades.db` (for `arb` strategy) or `data/bonereaper_trades.db` (for `bonereaper` strategy). To generate a performance report:
 
 ```bash
 python utils/report.py --period 7d
